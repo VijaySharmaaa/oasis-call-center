@@ -21,7 +21,8 @@ const CATEGORIZATION_SCHEMA = {
     "Registration Form Submission Error",
     "Multiple OTR Accounts Issue",
     "OTR ID Not Received After Registration",
-    "Registration Confirmation Not Received"
+    "Registration Confirmation Not Received",
+    "Apply / OTR Link Not Visible on Portal"
   ],
   "Identity Verification": [
     "Aadhaar OTP Not Received",
@@ -32,7 +33,10 @@ const CATEGORIZATION_SCHEMA = {
     "Live Photo / Face Match Failure",
     "Manual Aadhaar Verification Request",
     "Photo Clicked During Verification Issue",
-    "Aadhaar Linked Mobile Not Available"
+    "Aadhaar Linked Mobile Not Available",
+    "Name Prefix Mismatch (KM / Kumari)",
+    "Post-Marriage Surname Mismatch in eKYC",
+    "Wrong ID Type Used at Registration"
   ],
   "OTP, Password & CAPTCHA": [
     "Mobile OTP Not Received",
@@ -40,7 +44,6 @@ const CATEGORIZATION_SCHEMA = {
     "OTP Expired Before Use",
     "Wrong OTP Entered Multiple Times",
     "Password Forgotten / Reset",
-    "OTR ID Forgotten",
     "CAPTCHA Not Loading / Unclear",
     "Account Recovery Query",
     "OTP Coming on Wrong Number"
@@ -73,7 +76,8 @@ const CATEGORIZATION_SCHEMA = {
     "Gender / Nationality Entry Issue",
     "Twin Information Query",
     "Father / Husband Name Entry Issue",
-    "Mobile / Email Change in Profile"
+    "Mobile / Email Change in Profile",
+    "Marital Status Field Query"
   ],
   "Educational Qualifications": [
     "Education Details Entry in OTR",
@@ -87,7 +91,11 @@ const CATEGORIZATION_SCHEMA = {
     "Year of Passing Entry Issue",
     "Appearing / Passed Status Query",
     "Final Year Appearing Candidate Entry",
-    "Multiple Degree Entry Issue"
+    "Multiple Degree Entry Issue",
+    "Appearing Option Missing in Dropdown",
+    "Board Roll Number Digit Length Rejected",
+    "Out-of-State / NIOS Qualification Not Listed",
+    "Graduation Field Mandatory but Not Applicable"
   ],
   "Uploads & Documents": [
     "Photograph Upload Issue",
@@ -103,7 +111,9 @@ const CATEGORIZATION_SCHEMA = {
     "Document Preview Not Showing",
     "Photo Background Color Requirement",
     "Photo Dimensions Not Accepted",
-    "Upload Button Not Working"
+    "Upload Button Not Working",
+    "Wrong Person's Document Uploaded",
+    "Handwritten Declaration Language Requirement"
   ],
   "OTR Completion & Preview": [
     "Preview & Edit Before OTR Completion",
@@ -127,7 +137,8 @@ const CATEGORIZATION_SCHEMA = {
     "Age Limit Eligibility Query",
     "Exam Centre Preference Entry",
     "Application Form Section Not Saving",
-    "How to Apply for Exam After OTR"
+    "How to Apply for Exam After OTR",
+    "In-Service Teacher Without Graduation Eligibility"
   ],
   "Payment & Fee": [
     "Fee Amount Query",
@@ -147,7 +158,6 @@ const CATEGORIZATION_SCHEMA = {
   ],
   "Login & Account Access": [
     "Login Method Query",
-    "Password Forgotten / Reset",
     "OTR ID Forgotten / Recovery",
     "OTP Login Not Working",
     "Account Locked / Blocked",
@@ -167,7 +177,9 @@ const CATEGORIZATION_SCHEMA = {
     "Subject / Paper Change After Submission",
     "Address Correction After Submission",
     "Re-payment Required After Amendment",
-    "Amendment Confirmation Not Received"
+    "Amendment Confirmation Not Received",
+    "Wrong Exam Level Selected (Primary vs Junior)",
+    "Form Cancellation / Withdrawal Request"
   ],
   "Exam Information": [
     "Important Dates & Schedule Query",
