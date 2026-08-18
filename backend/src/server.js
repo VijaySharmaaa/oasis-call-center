@@ -26,6 +26,24 @@ const app  = express();
 const PORT = process.env.PORT || 3001;
 const isProd = process.env.NODE_ENV === 'production';
 
+// ── Proxy trust ──────────────────────────────────────────────────────────────
+// Every request arrives through the frontend's Nginx, which sets
+// X-Forwarded-For. Without this, Express reports the proxy's address as the
+// client IP, so express-rate-limit buckets EVERY user together — one shared
+// 300/min allowance and a global 20-per-15-min login cap — and throws
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on each rate-limited request.
+//
+// The value is the NUMBER OF PROXY HOPS, counted back from this app: 1 for the
+// Nginx container alone, 2 when a load balancer or TLS terminator sits in front
+// of it. It is deliberately not `true`: trusting the whole chain lets a client
+// forge X-Forwarded-For and pick its own rate-limit bucket, which defeats the
+// limiter entirely.
+const trustProxy = process.env.TRUST_PROXY ?? (isProd ? '1' : '0');
+if (trustProxy !== '0' && trustProxy !== 'false') {
+  const hops = Number(trustProxy);
+  app.set('trust proxy', Number.isFinite(hops) ? hops : trustProxy);
+}
+
 // ── Security headers ─────────────────────────────────────────────────────────
 app.use(helmet());
 
