@@ -1,6 +1,6 @@
 # Email Corpus vs. Categorization Schema — Fit & Gap Analysis
 
-Fitting the UPTET-2026 email helpline corpus in `data/` against the 17-category `CATEGORIZATION_SCHEMA` (see [`call-categories.md`](./call-categories.md)), and identifying what the schema is missing.
+Fitting the UPTET-2026 email helpline corpus in `data/` against the 17-category `CATEGORIZATION_SCHEMA` (see [`taxonomy.md`](./taxonomy.md)), and identifying what the schema is missing.
 
 > **Status: applied 2026-08-14.** All 14 proposed sub-categories and the duplicate fix are now live in `geminiService.js`. The schema went 184 → 196 sub-categories and coverage rose **79.5% → 82.4%**. Percentages in the *Result* section below are the **pre-change** baseline, kept as the record of why each change was made; the post-change figures are in [Outcome](#outcome-after-applying-the-changes).
 
@@ -178,7 +178,7 @@ Evaluated first; only `Actionable` items get a `category` / `sub_category`. This
 
 ### 3. Fix the two duplicate sub-categories first ✅ applied
 
-`Password Forgotten / Reset` and `OTR ID Forgotten` appeared under both #3 and #11, so any classifier — Gemini or otherwise — split those calls arbitrarily between two parents. Resolved before the additions went in: #3 now owns credential challenges (password, OTP, CAPTCHA) and #11 owns account access (login, lockouts, identifier recovery, sessions). Details in the [change log](./call-categories.md#change-log).
+`Password Forgotten / Reset` and `OTR ID Forgotten` appeared under both #3 and #11, so any classifier — Gemini or otherwise — split those calls arbitrarily between two parents. Resolved before the additions went in: #3 now owns credential challenges (password, OTP, CAPTCHA) and #11 owns account access (login, lockouts, identifier recovery, sessions). Details in the [change log](./taxonomy.md#change-log).
 
 ## Data quality notes for the intake process
 
