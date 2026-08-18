@@ -7,10 +7,12 @@ import Dashboard      from './pages/Dashboard';
 import CallReport     from './pages/CallReport';
 import Agents         from './pages/Agents';
 import Tickets        from './pages/Tickets';
+import Emails         from './pages/Emails';
 import AIAnalysis     from './pages/AIAnalysis';
 import Stations       from './pages/Stations';
+import Reports        from './pages/Reports';
 
-const VALID_PAGES = new Set(['dashboard', 'call-report', 'agents', 'tickets', 'ai-analysis', 'stations']);
+const VALID_PAGES = new Set(['dashboard', 'call-report', 'agents', 'tickets', 'emails', 'ai-analysis', 'stations', 'reports']);
 
 function pageFromPath() {
   const seg = window.location.pathname.replace(/^\//, '');
@@ -72,8 +74,10 @@ function Shell() {
       case 'call-report':  return <CallReport />;
       case 'agents':       return <Agents />;
       case 'tickets':      return <Tickets />;
+      case 'emails':       return <Emails />;
       case 'ai-analysis':  return <AIAnalysis />;
       case 'stations':     return <Stations />;
+      case 'reports':      return <Reports />;
       default:             return <Dashboard onNavigate={navigate} />;
     }
   }
@@ -81,7 +85,7 @@ function Shell() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-zinc-950 text-slate-900 dark:text-zinc-100 flex flex-col">
       {sessionExpired && (
-        <div className="z-50 flex items-center justify-between gap-4 px-4 py-2.5 bg-amber-500 text-white text-sm shrink-0">
+        <div className="print:hidden z-50 flex items-center justify-between gap-4 px-4 py-2.5 bg-amber-500 text-white text-sm shrink-0">
           <div className="flex items-center gap-2">
             <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 11h.01"/>
@@ -98,7 +102,10 @@ function Shell() {
       )}
 
       <div className="flex flex-1 min-h-0">
-        <Sidebar activePage={activePage} onNavigate={navigate} />
+        {/* Chrome is screen-only: a printed report is the sheets and nothing else. */}
+        <div className="print:hidden contents">
+          <Sidebar activePage={activePage} onNavigate={navigate} />
+        </div>
         <main className="flex-1 min-w-0 pt-14 lg:pt-0 overflow-auto">
           {renderPage()}
         </main>

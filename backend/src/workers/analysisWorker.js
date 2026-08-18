@@ -104,13 +104,14 @@ async function processRecord(db, record) {
     if (callDoc && callDoc.duration > 0 && callDoc.duration < 10) {
       const wb = await analysisCol.updateOne(
         ownedFilter,
-        { $set: { status: 'completed', category: 'Call too Short', sub_category: '', call_category: 'Call too Short', summary: '', transcription: '', language: '', error: null, processed_at: new Date(), updated_at: new Date() } }
+        // A sentinel is a state, not an issue, so it earns no tag.
+        { $set: { status: 'completed', category: 'Call too Short', sub_category: '', call_category: 'Call too Short', tags: [], summary: '', transcription: '', language: '', error: null, processed_at: new Date(), updated_at: new Date() } }
       );
       if (wb.matchedCount === 0) {
         logger.warn('[Worker] Lock lost, skipping writeback', { call_id });
         return;
       }
-      await callsCol.updateOne({ call_id }, { $set: { category: 'Call too Short', sub_category: '' } });
+      await callsCol.updateOne({ call_id }, { $set: { category: 'Call too Short', sub_category: '', tags: [] } });
       logger.info('[Worker] Skipped (too short)', { call_id, duration: callDoc.duration });
       return;
     }
@@ -135,13 +136,13 @@ async function processRecord(db, record) {
     if (result.success && result.category === 'Audio Unclear') {
       const wb = await analysisCol.updateOne(
         ownedFilter,
-        { $set: { status: 'completed', category: 'Audio Unclear', sub_category: '', call_category: 'Audio Unclear', summary: result.summary || '', ai_insight: '-', bugs: '-', agent_score: null, call_resolved: 'No', audio_quality: result.audio_quality, transcription: result.transcription || '', language: result.language || [], error: null, processed_at: new Date(), updated_at: new Date() } }
+        { $set: { status: 'completed', category: 'Audio Unclear', sub_category: '', call_category: 'Audio Unclear', tags: [], summary: result.summary || '', ai_insight: '-', bugs: '-', agent_score: null, call_resolved: 'No', audio_quality: result.audio_quality, transcription: result.transcription || '', language: result.language || [], error: null, processed_at: new Date(), updated_at: new Date() } }
       );
       if (wb.matchedCount === 0) {
         logger.warn('[Worker] Lock lost, skipping writeback', { call_id });
         return;
       }
-      await callsCol.updateOne({ call_id }, { $set: { category: 'Audio Unclear', sub_category: '' } });
+      await callsCol.updateOne({ call_id }, { $set: { category: 'Audio Unclear', sub_category: '', tags: [] } });
       logger.info('[Worker] Audio Unclear', { call_id });
     } else if (result.permanent) {
       const wb = await analysisCol.updateOne(
@@ -163,6 +164,7 @@ async function processRecord(db, record) {
             status:            'completed',
             category:          result.category,
             sub_category:      result.sub_category,
+            tags:              result.tags || [],
             summary:           result.summary,
             ai_insight:        result.ai_insight,
             bugs:              result.bugs,
@@ -189,11 +191,13 @@ async function processRecord(db, record) {
         logger.warn('[Worker] Lock lost, skipping writeback', { call_id });
         return;
       }
+      // Mirrored onto the call document so the Call Report can filter by tag
+      // without joining call_analysis, exactly as the scalar pair is.
       await callsCol.updateOne(
         { call_id },
-        { $set: { category: result.category, sub_category: result.sub_category } }
+        { $set: { category: result.category, sub_category: result.sub_category, tags: result.tags || [] } }
       );
-      logger.info('[Worker] Done', { call_id });
+      logger.info('[Worker] Done', { call_id, tags: (result.tags || []).length });
     } else {
       // Transient failure — schedule a retry with exponential backoff
       await scheduleRetryOrFail(analysisCol, record, ownedFilter, result.error);

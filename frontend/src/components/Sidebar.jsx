@@ -41,6 +41,17 @@ const NAV = [
     ),
   },
   {
+    id: 'emails',
+    label: 'Emails',
+    roles: ['admin', 'agent'],
+    icon: (
+      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+        <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+      </svg>
+    ),
+  },
+  {
     id: 'ai-analysis',
     label: 'AI Analysis',
     roles: ['admin'],
@@ -58,6 +69,17 @@ const NAV = [
     icon: (
       <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
         <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906zM10 13a4 4 0 014 4v1H6v-1a4 4 0 014-4z"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'reports',
+    label: 'Daily Report',
+    roles: ['admin'],
+    icon: (
+      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 2.5h7l3.5 3.5v11a1 1 0 01-1 1H5a1 1 0 01-1-1v-13a1 1 0 011-1z"/>
+        <path d="M12 2.5V6h3.5M7 11v3M10 9.5V14M13 12.5V14"/>
       </svg>
     ),
   },
@@ -158,7 +180,7 @@ export default function Sidebar({ activePage, onNavigate }) {
           {!collapsed && <span>Sign out</span>}
         </button>
 
-        {!collapsed && <p className="text-center text-[10px] text-slate-300 dark:text-zinc-700 py-1">v3.5.4</p>}
+        {!collapsed && <p className="text-center text-[10px] text-slate-300 dark:text-zinc-700 py-1">v3.6.0</p>}
       </div>
     </div>
   );

@@ -6,8 +6,24 @@ const { getDb } = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { createExportJob, getExportJob } = require('../workers/exportWorker');
 const { detectTranscriptionLoop, generateCategoryTaxonomy, generaliseCategoryTaxonomy } = require('../services/geminiService');
+const { dynamicCategoriesEnabled } = require('../config/features');
+const { tagMatch } = require('../lib/tags');
 
 const router = express.Router();
+
+// Both taxonomy generators REPLACE the call_categories collection, and
+// /generalise-categories additionally retro-remaps every historical record.
+// Neither may run while the dynamic taxonomy is switched off — otherwise a
+// stray admin call would repopulate the very taxonomy the flag exists to
+// freeze. 409, not 403: the caller has the rights, the feature is disabled.
+function requireDynamicCategories(req, res, next) {
+  if (dynamicCategoriesEnabled()) return next();
+  return res.status(409).json({
+    ok: false,
+    error: 'Dynamic call categories are disabled. Analysis uses the hardcoded CATEGORIZATION_SCHEMA only. Set DYNAMIC_CATEGORIES_ENABLED=true and restart the backend to re-enable taxonomy generation.',
+    flag: 'DYNAMIC_CATEGORIES_ENABLED',
+  });
+}
 
 // Token-based download for analysis export (no Authorization header required).
 // Must be declared before `requireAuth` mount — which happens in server.js.
@@ -529,7 +545,7 @@ router.post('/reset-loops', requireAdmin, async (req, res) => {
 //   dry_run:           boolean   if true, return proposal only (default true)
 //   commit:            boolean   alias for dry_run=false (explicit intent)
 //   reason:            string    audit note stored on the history record
-router.post('/generate-categories', requireAdmin, async (req, res) => {
+router.post('/generate-categories', requireAdmin, requireDynamicCategories, async (req, res) => {
   const db = await getDb();
   const body = req.body || {};
   const dryRun = body.commit === true ? false : (body.dry_run !== false);
@@ -664,7 +680,7 @@ router.post('/generate-categories', requireAdmin, async (req, res) => {
 // Top-level count and sub-category counts per parent are intentionally NOT
 // knobs — Gemini decides both based on the natural cluster boundaries in
 // the input. No padding to hit a target, no forced merging.
-router.post('/generalise-categories', requireAdmin, async (req, res) => {
+router.post('/generalise-categories', requireAdmin, requireDynamicCategories, async (req, res) => {
   const db = await getDb();
   const body = req.body || {};
   const dryRun = body.commit === true ? false : (body.dry_run !== false);
@@ -808,12 +824,17 @@ router.get('/', async (req, res) => {
   if (bugsOnly) conditions.push({ bugs: { $exists: true, $nin: ['', '-'] } });
   if (bugCategory) conditions.push({ bug_category: bugCategory });
   if (callCategory) conditions.push({ call_category: callCategory });
-  if (category) conditions.push({ category });
+  // Matches the category on ANY tag, so a call whose second issue was Billing
+  // is found by a Billing filter. Sentinels are never tagged, so they keep
+  // matching through the scalar arm of tagMatch.
+  if (category) conditions.push(tagMatch(category));
   if (search)   conditions.push({ $or: [
-    { call_id:     { $regex: search, $options: 'i' } },
-    { category:    { $regex: search, $options: 'i' } },
-    { sub_category:{ $regex: search, $options: 'i' } },
-    { ai_insight:  { $regex: search, $options: 'i' } },
+    { call_id:          { $regex: search, $options: 'i' } },
+    { category:         { $regex: search, $options: 'i' } },
+    { sub_category:     { $regex: search, $options: 'i' } },
+    { 'tags.category':  { $regex: search, $options: 'i' } },
+    { 'tags.sub_category': { $regex: search, $options: 'i' } },
+    { ai_insight:       { $regex: search, $options: 'i' } },
   ]});
   if (dateFrom || dateTo) {
     const dc = {};
