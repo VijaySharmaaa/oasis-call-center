@@ -180,18 +180,27 @@ export default function TicketDetailModal({ ticketId, onClose, onUpdated, onDele
             {/* Info grid */}
             <div className="px-6 py-4 grid grid-cols-2 sm:grid-cols-3 gap-4 border-b border-slate-100 dark:border-zinc-800">
               {[
-                ['Customer',   ticket.customer_name ? `${ticket.customer_name} · ${ticket.customer_number}` : ticket.customer_number],
+                // Call tickets carry a number, email tickets an address; only
+                // one is ever set, so show whichever identifies this customer.
+                ['Customer',   [ticket.customer_name, ticket.customer_number || ticket.customer_email].filter(Boolean).join(' · ')],
+                ['Source',     ticket.source === 'email' ? 'Email' : 'Call'],
                 ['Agent',      ticket.agent_name ? `${ticket.agent_name} (${ticket.agent_number})` : ticket.agent_number || '—'],
                 ['Category',   ticket.category],
                 ['Created by', ticket.created_by_name],
                 ['Created',    fmtDate(ticket.created_at)],
                 ['Updated',    fmtDate(ticket.updated_at)],
               ].map(([label, val]) => (
-                <div key={label}>
+                <div key={label} className="min-w-0">
                   <p className="text-xs text-slate-400 dark:text-zinc-500 mb-0.5">{label}</p>
-                  <p className="text-sm text-slate-800 dark:text-zinc-200 font-medium">{val || '—'}</p>
+                  <p className="text-sm text-slate-800 dark:text-zinc-200 font-medium break-words">{val || '—'}</p>
                 </div>
               ))}
+              {ticket.email_subject && (
+                <div className="col-span-2 sm:col-span-3 min-w-0">
+                  <p className="text-xs text-slate-400 dark:text-zinc-500 mb-0.5">Email subject</p>
+                  <p className="text-sm text-slate-700 dark:text-zinc-300 break-words">{ticket.email_subject}</p>
+                </div>
+              )}
               {ticket.description && (
                 <div className="col-span-2 sm:col-span-3">
                   <p className="text-xs text-slate-400 dark:text-zinc-500 mb-0.5">Description</p>

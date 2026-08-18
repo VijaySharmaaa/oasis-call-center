@@ -35,6 +35,12 @@ function getDb() {
           db.collection('email_analysis').createIndex({ gmail_id: 1 }, { unique: true }),
           db.collection('email_analysis').createIndex({ status: 1, created_at: -1 }),
           db.collection('email_analysis').createIndex({ category: 1 }),
+          // Tickets are opened from a call or an email detail view, both of
+          // which look up "everything already raised for this customer".
+          db.collection('tickets').createIndex({ created_at: -1 }),
+          db.collection('tickets').createIndex({ customer_number: 1, created_at: -1 }),
+          db.collection('tickets').createIndex({ customer_email: 1, created_at: -1 }),
+          db.collection('tickets').createIndex({ email_id: 1 }),
         ]).then(() => db);
       })
       .catch(err => {

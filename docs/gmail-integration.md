@@ -109,6 +109,24 @@ The **disposition axis** from `email-taxonomy-fit.md` is *not* implemented. Auto
 
 Email HTML is untrusted third-party markup, so it is never injected into the app's DOM. The detail modal defaults to the plain-text part and renders HTML only inside `<iframe sandbox="" referrerPolicy="no-referrer">` — no scripts, forms, popups, or top-level navigation, and no access to the session token.
 
+## Ticketing from email
+
+Tickets are no longer a call-only artefact. The same `tickets` collection, the same `TKT-` counter, and the same detail modal now serve both channels; what differs is only how the customer is identified.
+
+| | Call ticket | Email ticket |
+|---|---|---|
+| `source` | `'call'` | `'email'` |
+| Customer key | `customer_number` | `customer_email` (stored lower-case) |
+| Origin link | `call_id` | `email_id` (Gmail message id) + `email_subject` |
+
+`POST /api/tickets` therefore requires **`customer_number` or `customer_email`**, not a phone number specifically. Tickets written before this change have no `source` field and are treated as calls — `?source=call` matches them via `$exists`, so the filter never silently drops history.
+
+New list filters: `customerEmail`, `emailId`, `callId`, `source`. Search now also covers `customer_email` and `email_subject`, and the term is regex-escaped — an address is full of metacharacters that would otherwise match far too much.
+
+In the UI, `EmailTicketModal` is the twin of `CallTicketModal`: it lists everything already raised **for that sender address** — so a follow-up mail shows the earlier tickets — and opens `CreateTicketModal` with the subject seeded as the title. It is reachable from the row action on the Emails table and from the *Ticket* button in the email detail modal. The Tickets page gains a source filter and shows a phone/envelope icon per row.
+
+The click-to-call button in `TicketDetailModal` is already gated on `customer_number`, so it simply does not appear on an email ticket.
+
 ## Configuration
 
 Every variable is documented in `backend/.env.example` under *Gmail — support mailbox ingestion*. The feature is inert until `GMAIL_USER` is set, so an unconfigured deploy runs exactly as before.

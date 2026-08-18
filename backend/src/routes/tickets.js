@@ -9,6 +9,20 @@ router.use(requireAuth);
 const CATEGORIES = ['General Inquiry', 'Technical Issue', 'Billing', 'Complaint', 'Service Request', 'Follow Up', 'Others'];
 const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
 const STATUSES   = ['Open', 'In Progress', 'Resolved', 'Closed'];
+// Where the ticket came from. Tickets written before this field existed are all
+// calls, so 'call' is both the default and the value that matches a missing one.
+const SOURCES    = ['call', 'email'];
+
+// Search terms reach a $regex, and an email address is full of regex
+// metacharacters — a bare "a.b+c@x.com" would otherwise match far too much.
+function escapeRegex(str) {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A trimmed string, or '' for anything that is not one. */
+function text(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 async function nextTicketNumber(db) {
   const result = await db.collection('counters').findOneAndUpdate(
@@ -19,23 +33,43 @@ async function nextTicketNumber(db) {
   return `TKT-${String(result.seq).padStart(4, '0')}`;
 }
 
-// POST /api/tickets — create a ticket
+// POST /api/tickets — create a ticket (from a call or from an email)
 router.post('/', async (req, res) => {
-  const { call_id, customer_name, customer_number, agent_number, agent_name, title, description, category, priority } = req.body;
-  if (!customer_number || !title) return res.status(400).json({ error: 'customer_number and title are required' });
+  const {
+    call_id, email_id, email_subject,
+    customer_name, customer_number, customer_email,
+    agent_number, agent_name,
+    title, description, category, priority, source,
+  } = req.body;
+
+  // A call identifies the customer by number, an email by address. Exactly one
+  // of the two is guaranteed to be present, never both, so the requirement is
+  // "some way to reach the customer" rather than a phone number specifically.
+  // Non-string input is treated as absent — a bad body earns a 400, not a 500.
+  const number  = text(customer_number) || null;
+  const email   = text(customer_email).toLowerCase() || null;
+  const subject = text(title);
+  if (!number && !email) return res.status(400).json({ error: 'customer_number or customer_email is required' });
+  if (!subject)          return res.status(400).json({ error: 'title is required' });
 
   const db  = await getDb();
   const now = new Date();
   const ticket_number = await nextTicketNumber(db);
 
+  const resolvedSource = SOURCES.includes(source) ? source : (email_id ? 'email' : 'call');
+
   const ticket = {
     ticket_number,
-    call_id:         call_id || null,
+    source:          resolvedSource,
+    call_id:         call_id  || null,
+    email_id:        email_id || null,
+    email_subject:   email_subject || null,
     customer_name:   customer_name || null,
-    customer_number,
+    customer_number: number,
+    customer_email:  email,
     agent_number:    agent_number  || req.user.agent_number || null,
     agent_name:      agent_name    || req.user.name         || null,
-    title,
+    title:           subject,
     description:     description   || '',
     category:        CATEGORIES.includes(category) ? category : 'General Inquiry',
     priority:        PRIORITIES.includes(priority) ? priority : 'Medium',
@@ -45,7 +79,7 @@ router.post('/', async (req, res) => {
     updated_at:      now,
     timeline: [{
       type:      'created',
-      note:      'Ticket created',
+      note:      resolvedSource === 'email' ? 'Ticket created from email' : 'Ticket created',
       by_name:   req.user.name,
       by_number: req.user.agent_number || null,
       at:        now,
@@ -59,7 +93,10 @@ router.post('/', async (req, res) => {
 // GET /api/tickets — list
 router.get('/', async (req, res) => {
   const db = await getDb();
-  const { status, priority, category, agentNumber, customerNumber, search, limit = '25', offset = '0', dateFrom, dateTo } = req.query;
+  const {
+    status, priority, category, agentNumber, customerNumber, customerEmail,
+    emailId, callId, source, search, limit = '25', offset = '0', dateFrom, dateTo,
+  } = req.query;
 
   const conditions = [];
 
@@ -68,13 +105,24 @@ router.get('/', async (req, res) => {
   if (category)       conditions.push({ category });
   if (agentNumber)    conditions.push({ agent_number: agentNumber });
   if (customerNumber) conditions.push({ customer_number: customerNumber });
+  if (customerEmail)  conditions.push({ customer_email: customerEmail.toLowerCase() });
+  if (emailId)        conditions.push({ email_id: emailId });
+  if (callId)         conditions.push({ call_id: callId });
+
+  // Tickets predating the `source` field are calls, hence the $exists arm.
+  if (source === 'call')       conditions.push({ $or: [{ source: 'call' }, { source: { $exists: false } }] });
+  else if (source === 'email') conditions.push({ source: 'email' });
+
   if (search) {
+    const re = { $regex: escapeRegex(search), $options: 'i' };
     conditions.push({ $or: [
-      { ticket_number:   { $regex: search, $options: 'i' } },
-      { customer_name:   { $regex: search, $options: 'i' } },
-      { customer_number: { $regex: search, $options: 'i' } },
-      { title:           { $regex: search, $options: 'i' } },
-      { agent_name:      { $regex: search, $options: 'i' } },
+      { ticket_number:   re },
+      { customer_name:   re },
+      { customer_number: re },
+      { customer_email:  re },
+      { email_subject:   re },
+      { title:           re },
+      { agent_name:      re },
     ]});
   }
 

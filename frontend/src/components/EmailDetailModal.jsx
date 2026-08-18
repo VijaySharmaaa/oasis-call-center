@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { fmtDate } from './TicketDetailModal';
+import EmailTicketModal from './EmailTicketModal';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -118,6 +119,7 @@ export default function EmailDetailModal({ emailId, onClose }) {
   const [view,    setView]    = useState('text');
   const [busyAttachment, setBusyAttachment] = useState(null);
   const [queueing, setQueueing] = useState(false);
+  const [showTickets, setShowTickets] = useState(false);
 
   const load = useCallback(async () => {
     const res = await fetch(`${API}/api/emails/${emailId}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -169,11 +171,17 @@ export default function EmailDetailModal({ emailId, onClose }) {
     return () => { cancelled = true; };
   }, [emailId, token]);
 
+  // Escape unwinds one layer at a time: the ticket modal is stacked on top of
+  // this one, so closing the mail out from under it would be wrong.
   useEffect(() => {
-    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    function onKey(e) {
+      if (e.key !== 'Escape') return;
+      if (showTickets) setShowTickets(false);
+      else onClose();
+    }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, showTickets]);
 
   /* Attachments need the Authorization header, so a bare <a href> won't do —
      fetch the bytes and hand the browser a blob URL instead. */
@@ -203,6 +211,7 @@ export default function EmailDetailModal({ emailId, onClose }) {
   const userLabels = (email?.label_ids ?? []).filter(l => !SYSTEM_LABELS.has(l));
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div
         className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-3xl border border-slate-200 dark:border-zinc-700 max-h-[90vh] flex flex-col"
@@ -236,14 +245,28 @@ export default function EmailDetailModal({ emailId, onClose }) {
               </>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="shrink-0 ml-4 w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 dark:text-zinc-500 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-600 dark:hover:text-zinc-300 transition-colors"
-          >
-            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-              <path d="M4 4l8 8M12 4l-8 8"/>
-            </svg>
-          </button>
+          <div className="shrink-0 ml-4 flex items-center gap-1.5">
+            <button
+              onClick={() => setShowTickets(true)}
+              disabled={!email?.from_email}
+              title="Tickets for this sender"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-40"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v2a1.5 1.5 0 010 3v2A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.5v-2a1.5 1.5 0 010-3v-2z"/>
+                <path d="M8 6v4M6 8h4"/>
+              </svg>
+              Ticket
+            </button>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 dark:text-zinc-500 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-600 dark:hover:text-zinc-300 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <path d="M4 4l8 8M12 4l-8 8"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -330,5 +353,11 @@ export default function EmailDetailModal({ emailId, onClose }) {
         </div>
       </div>
     </div>
+
+    {/* Stacked above this modal — later in the DOM, so it wins at the same z. */}
+    {showTickets && email && (
+      <EmailTicketModal email={email} onClose={() => setShowTickets(false)} />
+    )}
+    </>
   );
 }

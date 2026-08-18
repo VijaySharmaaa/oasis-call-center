@@ -13,13 +13,22 @@ const PRIORITY_COLORS = {
   Urgent: 'text-red-600 bg-red-50 dark:bg-red-950/40 dark:text-red-400',
 };
 
-export default function CreateTicketModal({ call, onClose, onCreated }) {
+/**
+ * Create a ticket from either source. `call` and `email` are mutually
+ * exclusive: whichever is passed decides how the customer is identified —
+ * by phone number for a call, by address for an email.
+ */
+export default function CreateTicketModal({ call, email, onClose, onCreated }) {
   const { token, user } = useAuth();
+  const isEmail = !!email;
 
   const [form, setForm] = useState({
-    customer_name:   '',
+    customer_name:   email?.from_name || '',
     customer_number: call?.caller_number || call?.called_number || '',
-    title:           '',
+    customer_email:  email?.from_email || '',
+    // A subject line is already a summary of the problem, so it seeds the
+    // title — still editable before submitting.
+    title:           email?.subject || '',
     description:     '',
     category:        'General Inquiry',
     priority:        'Medium',
@@ -39,9 +48,13 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
         method:  'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
+          source:          isEmail ? 'email' : 'call',
           call_id:         call?.call_id || call?.id || null,
+          email_id:        email?.id || null,
+          email_subject:   email?.subject || null,
           customer_name:   form.customer_name.trim() || null,
-          customer_number: form.customer_number,
+          customer_number: isEmail ? null : form.customer_number,
+          customer_email:  isEmail ? form.customer_email : null,
           agent_number:    call?.agent_number || user?.agent_number || null,
           agent_name:      call?.agent_name   || user?.name         || null,
           title:           form.title.trim(),
@@ -54,7 +67,7 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
       if (!res.ok) { setError(data.error || 'Failed to create ticket'); return; }
       onCreated?.(data);
       onClose();
-    } catch (e) {
+    } catch {
       setError('Network error');
     } finally {
       setLoading(false);
@@ -68,7 +81,8 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-zinc-800">
           <div>
             <h2 className="text-base font-bold text-slate-900 dark:text-zinc-100">Create Ticket</h2>
-            {call && <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">From call · {call.caller_number}</p>}
+            {call  && <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">From call · {call.caller_number}</p>}
+            {email && <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 break-all">From email · {email.from_email}</p>}
           </div>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors">
             <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg>
@@ -79,8 +93,9 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
           {/* Customer Name + Number */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Customer Name</label>
+              <label htmlFor="ticket-customer-name" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Customer Name</label>
               <input
+                id="ticket-customer-name"
                 type="text"
                 value={form.customer_name}
                 onChange={e => set('customer_name', e.target.value)}
@@ -89,20 +104,25 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Customer Number</label>
+              <label htmlFor="ticket-customer-contact" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">
+                {isEmail ? 'Customer Email' : 'Customer Number'}
+              </label>
               <input
+                id="ticket-customer-contact"
                 type="text"
-                value={form.customer_number}
+                value={isEmail ? form.customer_email : form.customer_number}
                 readOnly
-                className="w-full px-3 py-2 bg-slate-100 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700 rounded-lg text-sm text-slate-500 dark:text-zinc-400 cursor-not-allowed select-none"
+                title={isEmail ? form.customer_email : undefined}
+                className="w-full px-3 py-2 bg-slate-100 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700 rounded-lg text-sm text-slate-500 dark:text-zinc-400 cursor-not-allowed select-none truncate"
               />
             </div>
           </div>
 
           {/* Title */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Title <span className="text-red-500">*</span></label>
+            <label htmlFor="ticket-title" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Title <span className="text-red-500">*</span></label>
             <input
+              id="ticket-title"
               type="text"
               value={form.title}
               onChange={e => set('title', e.target.value)}
@@ -115,8 +135,9 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
           {/* Category + Priority */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Category</label>
+              <label htmlFor="ticket-category" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Category</label>
               <select
+                id="ticket-category"
                 value={form.category}
                 onChange={e => set('category', e.target.value)}
                 className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-slate-300 dark:border-zinc-700 rounded-lg text-sm text-slate-900 dark:text-zinc-100 focus:outline-none focus:border-indigo-500 transition-colors"
@@ -125,8 +146,9 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
               </select>
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Priority</label>
+              <label htmlFor="ticket-priority" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Priority</label>
               <select
+                id="ticket-priority"
                 value={form.priority}
                 onChange={e => set('priority', e.target.value)}
                 className={`w-full px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:border-indigo-500 transition-colors ${PRIORITY_COLORS[form.priority]} border-slate-300 dark:border-zinc-700`}
@@ -138,8 +160,9 @@ export default function CreateTicketModal({ call, onClose, onCreated }) {
 
           {/* Description */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Description</label>
+            <label htmlFor="ticket-description" className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1">Description</label>
             <textarea
+              id="ticket-description"
               rows={4}
               value={form.description}
               onChange={e => set('description', e.target.value)}

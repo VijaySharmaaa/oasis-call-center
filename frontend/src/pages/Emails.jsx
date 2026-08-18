@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { fmtDate } from '../components/TicketDetailModal';
 import EmailDetailModal from '../components/EmailDetailModal';
+import EmailTicketModal from '../components/EmailTicketModal';
 import Pagination from '../components/Pagination';
 import ColorSelect from '../components/ColorSelect';
 
@@ -11,6 +12,22 @@ const READ_COLORS = {
   'true':  'text-indigo-600 dark:text-indigo-400',
   'false': 'text-slate-500 dark:text-zinc-400',
 };
+
+/** Same affordance as the call report's row action, so it reads as one feature. */
+function TicketBtn({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Tickets for this sender"
+      className="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+    >
+      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 4.5A1.5 1.5 0 013.5 3h9A1.5 1.5 0 0114 4.5v2a1.5 1.5 0 010 3v2A1.5 1.5 0 0112.5 13h-9A1.5 1.5 0 012 11.5v-2a1.5 1.5 0 010-3v-2z"/>
+        <path d="M8 6v4M6 8h4"/>
+      </svg>
+    </button>
+  );
+}
 
 export default function Emails() {
   const { token, isAdmin } = useAuth();
@@ -32,6 +49,7 @@ export default function Emails() {
   const [dateFrom,    setDateFrom]    = useState('');
   const [dateTo,      setDateTo]      = useState('');
   const [selectedId,  setSelectedId]  = useState(null);
+  const [ticketEmail, setTicketEmail] = useState(null);
 
   const isFiltered = !!(search || unread || attachments || dateFrom || dateTo || category);
 
@@ -94,6 +112,7 @@ export default function Emails() {
   return (
     <div className="p-4 sm:p-6 lg:p-8">
       {selectedId && <EmailDetailModal emailId={selectedId} onClose={() => setSelectedId(null)} />}
+      {ticketEmail && <EmailTicketModal email={ticketEmail} onClose={() => setTicketEmail(null)} />}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -250,7 +269,7 @@ export default function Emails() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-100 dark:bg-zinc-900 text-slate-500 dark:text-zinc-400 text-left text-xs uppercase tracking-wide">
-                  {['From', 'Subject', 'AI Insight', 'Category', 'Sub-category', '', 'Received'].map((h, i) => (
+                  {['From', 'Subject', 'AI Insight', 'Category', 'Sub-category', '', 'Received', ''].map((h, i) => (
                     <th key={i} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -293,6 +312,9 @@ export default function Emails() {
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-slate-400 dark:text-zinc-500 text-xs whitespace-nowrap">{fmtDate(m.received_at)}</td>
+                    <td className="px-3 py-2.5">
+                      <TicketBtn onClick={e => { e.stopPropagation(); setTicketEmail(m); }} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -311,7 +333,10 @@ export default function Emails() {
                   <span className={`text-sm truncate ${m.is_unread ? 'font-bold text-slate-900 dark:text-zinc-100' : 'font-medium text-slate-600 dark:text-zinc-300'}`}>
                     {m.from_name || m.from_email || '—'}
                   </span>
-                  <span className="shrink-0 text-xs text-slate-400 dark:text-zinc-500">{fmtDate(m.received_at)}</span>
+                  <div className="shrink-0 flex items-center gap-1">
+                    <span className="text-xs text-slate-400 dark:text-zinc-500">{fmtDate(m.received_at)}</span>
+                    <TicketBtn onClick={e => { e.stopPropagation(); setTicketEmail(m); }} />
+                  </div>
                 </div>
                 <p className={`text-sm mb-1 ${m.is_unread ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-700 dark:text-zinc-300'}`}>{m.subject}</p>
                 <p className="text-xs text-slate-400 dark:text-zinc-500 line-clamp-2">{m.snippet}</p>
