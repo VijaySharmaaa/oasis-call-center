@@ -7,10 +7,11 @@ import Dashboard      from './pages/Dashboard';
 import CallReport     from './pages/CallReport';
 import Agents         from './pages/Agents';
 import Tickets        from './pages/Tickets';
+import Emails         from './pages/Emails';
 import AIAnalysis     from './pages/AIAnalysis';
 import Stations       from './pages/Stations';
 
-const VALID_PAGES = new Set(['dashboard', 'call-report', 'agents', 'tickets', 'ai-analysis', 'stations']);
+const VALID_PAGES = new Set(['dashboard', 'call-report', 'agents', 'tickets', 'emails', 'ai-analysis', 'stations']);
 
 function pageFromPath() {
   const seg = window.location.pathname.replace(/^\//, '');
@@ -72,6 +73,7 @@ function Shell() {
       case 'call-report':  return <CallReport />;
       case 'agents':       return <Agents />;
       case 'tickets':      return <Tickets />;
+      case 'emails':       return <Emails />;
       case 'ai-analysis':  return <AIAnalysis />;
       case 'stations':     return <Stations />;
       default:             return <Dashboard onNavigate={navigate} />;

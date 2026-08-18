@@ -13,10 +13,13 @@ const agentsRouter   = require('./routes/agents');
 const authRouter     = require('./routes/auth');
 const ticketsRouter  = require('./routes/tickets');
 const stationsRouter = require('./routes/stations');
+const emailsRouter   = require('./routes/emails');
 const { requireAuth } = require('./middleware/auth');
 const { startWorker } = require('./workers/analysisWorker');
 const { startBugCategoryWorker } = require('./workers/bugCategoryWorker');
 const { startExportWorker } = require('./workers/exportWorker');
+const { startEmailSyncWorker } = require('./workers/emailSyncWorker');
+const { startEmailAnalysisWorker } = require('./workers/emailAnalysisWorker');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -77,6 +80,7 @@ app.use('/api/analysis',      apiLimiter,  analysisRouter);
 app.use('/api/agents',        apiLimiter,  agentsRouter);
 app.use('/api/tickets',       apiLimiter,  ticketsRouter);
 app.use('/api/stations',      apiLimiter,  stationsRouter);
+app.use('/api/emails',        apiLimiter,  emailsRouter);
 app.use('/webhook/recording',             webhookRouter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
@@ -119,6 +123,8 @@ if (require.main === module) {
     startWorker();
     startBugCategoryWorker();
     startExportWorker();
+    startEmailSyncWorker();
+    startEmailAnalysisWorker();
   });
 
   // Graceful shutdown

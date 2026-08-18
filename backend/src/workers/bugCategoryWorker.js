@@ -1,5 +1,6 @@
 const { getDb } = require('../db');
 const logger = require('../logger');
+const { dynamicCategoriesEnabled } = require('../config/features');
 
 const INTERVAL = 60 * 60 * 1000; // 1 hour
 
@@ -93,12 +94,22 @@ Return ONLY a JSON array: [{"call_id": "...", "${targetField}": "..."}, ...]`;
 }
 
 async function runAll() {
+  // Bugs have no hardcoded schema to fall back on — bug_category would sit on
+  // "Uncategorised" forever if this pass were gated — so it always runs.
   await resolveUncategorised({
     label: 'BugCategory',
     sourceField: 'bugs',
     targetField: 'bug_category',
     categoryCollection: 'bug_categories',
   });
+
+  // Call categories DO have a hardcoded schema. While the dynamic taxonomy is
+  // off this pass is the last remaining path that can mint a new
+  // call_categories entry, so it is skipped outright.
+  if (!dynamicCategoriesEnabled()) {
+    logger.debug('[CallCategory] Skipped — DYNAMIC_CATEGORIES_ENABLED is off');
+    return;
+  }
   await resolveUncategorised({
     label: 'CallCategory',
     sourceField: 'ai_insight',

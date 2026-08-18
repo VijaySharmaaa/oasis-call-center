@@ -7,6 +7,7 @@
  */
 
 const logger = require('../logger');
+const { dynamicCategoriesEnabled } = require('../config/features');
 
 // ─── Categorization schema ────────────────────────────────────────────────────
 
@@ -863,6 +864,12 @@ async function categorizeRecording(audioUrl, { callCategories = [], bugCategorie
 
   if (!apiKey) return { success: false, error: 'GEMINI_API_KEY not set' };
 
+  // When the dynamic taxonomy is off, Gemini is never shown the
+  // `call_categories` collection and never asked for call_category /
+  // call_sub_category — those are derived server-side from the hardcoded
+  // schema after the response lands. No prompt input, no invented output.
+  const useDynamicCategories = dynamicCategoriesEnabled();
+
   const startTime = Date.now();
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -886,6 +893,24 @@ async function categorizeRecording(audioUrl, { callCategories = [], bugCategorie
       // ── Generate analysis ─────────────────────────────────────────────────
       const genStart   = Date.now();
       const schemaJson = JSON.stringify(CATEGORIZATION_SCHEMA, null, 2);
+
+      // Task 10 and its two output keys exist only while the dynamic taxonomy
+      // is enabled. With it off we drop both, so there is nothing for the model
+      // to invent — the keys are filled from `category`/`sub_category` below.
+      const taxonomyTask = !useDynamicCategories ? '' : `10) Call Category & Sub-Category:
+   - Use the hierarchical taxonomy below. Each entry is { "name": "<top-level>", "sub_categories": [...] }.
+   - Pick a call_category whose name best fits the ai_insight.
+   - Then pick a call_sub_category from THAT category's sub_categories list — never from a different category's sub-list.
+   - If no top-level fits: call_category = "Uncategorised", call_sub_category = "-".
+   - If a top-level fits but no sub matches: call_sub_category = "Other".
+   TAXONOMY: ${JSON.stringify(callCategories)}
+
+`;
+      const taxonomyOutputKeys = !useDynamicCategories ? '' : `
+  "call_category": "",
+  "call_sub_category": "",`;
+      // Bug detection keeps its own numbering whether or not task 10 is present.
+      const bugCategoryTaskNo = useDynamicCategories ? 11 : 10;
 
       const prompt = `
 You are analyzing ONE audio call recording from the UPTET-2026 candidate support helpline.
@@ -988,15 +1013,7 @@ TASKS:
 9) Language detection:
    - List all languages spoken (e.g., ["Hindi", "English"]).
 
-10) Call Category & Sub-Category:
-   - Use the hierarchical taxonomy below. Each entry is { "name": "<top-level>", "sub_categories": [...] }.
-   - Pick a call_category whose name best fits the ai_insight.
-   - Then pick a call_sub_category from THAT category's sub_categories list — never from a different category's sub-list.
-   - If no top-level fits: call_category = "Uncategorised", call_sub_category = "-".
-   - If a top-level fits but no sub matches: call_sub_category = "Other".
-   TAXONOMY: ${JSON.stringify(callCategories)}
-
-11) Bug Category:
+${taxonomyTask}${bugCategoryTaskNo}) Bug Category:
    - If bugs is not "-" (i.e., a real bug was found), assign a bug_category from this list: ${JSON.stringify(bugCategories)}
    - If the bug does NOT fit any of the above categories, set bug_category to "Uncategorised".
    - If bugs is "-", set bug_category to "-".
@@ -1010,9 +1027,7 @@ OUTPUT FORMAT (must match exactly):
   "sub_category": "",
   "summary": "",
   "ai_insight": "",
-  "bugs": "",
-  "call_category": "",
-  "call_sub_category": "",
+  "bugs": "",${taxonomyOutputKeys}
   "bug_category": "",
   "agent_score": null,
   "call_resolved": "",
@@ -1122,13 +1137,27 @@ OUTPUT FORMAT (must match exactly):
         return { success: false, permanent: true, error: 'transcription_loop_detected' };
       }
 
-      // Validate (call_category, call_sub_category) against the live taxonomy.
-      // Gemini occasionally hallucinates a category not in the list, or pairs
-      // a sub-category with the wrong parent. Snap to safe defaults so the DB
-      // never holds inconsistent pairs.
+      // Validate (call_category, call_sub_category) against the taxonomy in
+      // force. Gemini occasionally hallucinates a category not in the list, or
+      // pairs a sub-category with the wrong parent. Snap to safe defaults so
+      // the DB never holds inconsistent pairs.
+      //
+      // Dynamic taxonomy OFF: the model was never asked for these fields, so
+      // seed them from the hardcoded category/sub_category it *was* asked for
+      // and validate against CATEGORIZATION_SCHEMA. A pair that isn't in the
+      // schema (the model paraphrasing, ~6% of historical rows) lands on
+      // Uncategorised rather than smuggling an invented name through.
       const taxonomyMap = new Map();
-      for (const c of (callCategories || [])) {
-        if (c?.name) taxonomyMap.set(c.name, new Set(Array.isArray(c.sub_categories) ? c.sub_categories : []));
+      if (useDynamicCategories) {
+        for (const c of (callCategories || [])) {
+          if (c?.name) taxonomyMap.set(c.name, new Set(Array.isArray(c.sub_categories) ? c.sub_categories : []));
+        }
+      } else {
+        for (const [name, subs] of Object.entries(CATEGORIZATION_SCHEMA)) {
+          taxonomyMap.set(name, new Set(subs));
+        }
+        analysis.call_category     = cleanCategory(analysis.category)     || 'Uncategorised';
+        analysis.call_sub_category = cleanCategory(analysis.sub_category) || '-';
       }
       let validCategory    = analysis.call_category    || 'Uncategorised';
       let validSubCategory = analysis.call_sub_category || '-';
@@ -1204,4 +1233,434 @@ OUTPUT FORMAT (must match exactly):
   return { success: false, error: 'Max retries exceeded' };
 }
 
-module.exports = { categorizeRecording, CATEGORIZATION_SCHEMA, detectTranscriptionLoop, generateCategoryTaxonomy, generaliseCategoryTaxonomy };
+// ─── Email analysis ───────────────────────────────────────────────────────────
+/**
+ * Emails go through the SAME taxonomy as calls (CATEGORIZATION_SCHEMA), which
+ * was itself extended against the email corpus in docs/email-taxonomy-fit.md.
+ * What differs is only what a mail can carry: there is no audio to transcribe,
+ * no agent turn to score, and no call outcome to judge, so audio_quality /
+ * transcription / agent_score / call_resolved have no email equivalent and are
+ * absent rather than faked.
+ *
+ * Parity that IS kept with categorizeRecording:
+ *   • the same category/sub_category schema and snapping rules
+ *   • the same bugs + bug_category detection
+ *   • the same rate-limit gate, 429 fallback model, and retry classification
+ *   • one sentinel category for "nothing to analyse" (Email too Short) and one
+ *     for "cannot tell what they want" (Content Unclear), mirroring
+ *     Call too Short / Audio Unclear.
+ */
+
+// Per-email prompt budget. A support mailbox routinely carries megabyte-long
+// HTML newsletters and 40-message quoted threads; the issue is almost always in
+// the first screenful, so trim rather than pay for the tail.
+function emailBodyCharLimit() {
+  return Math.max(500, Number(process.env.EMAIL_ANALYSIS_MAX_CHARS) || 12_000);
+}
+
+/**
+ * Strip the quoted history and signature block so the model reads THIS message
+ * rather than the whole thread. Conservative: only well-known reply markers.
+ */
+function stripQuotedText(body) {
+  if (!body) return '';
+  const markers = [
+    /^\s*On .{0,120}wrote:\s*$/im,               // Gmail / Apple Mail
+    /^\s*-{2,}\s*Original Message\s*-{2,}\s*$/im, // Outlook
+    /^\s*_{10,}\s*$/m,                            // Outlook divider
+    /^\s*From:\s.+\s*$/im,                        // forwarded header block
+  ];
+  let cut = body.length;
+  for (const re of markers) {
+    const m = body.match(re);
+    if (!m || m.index === undefined) continue;
+    // Ignore a marker that would leave nothing behind — candidates often reply
+    // above a blank line, or forward a thread without writing anything at all.
+    // In that case the quoted text IS the content and must be kept.
+    if (!body.slice(0, m.index).trim()) continue;
+    if (m.index < cut) cut = m.index;
+  }
+  return body.slice(0, cut).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Very rough HTML → text, for mail that carries no text/plain part. */
+function htmlToText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * The readable text of an email, preferring the plain-text part.
+ * Exported for the worker's "is there anything here at all" check.
+ */
+function emailToPlainText(email = {}) {
+  const raw = (email.body_text && email.body_text.trim())
+    ? email.body_text
+    : htmlToText(email.body_html);
+  return stripQuotedText(raw);
+}
+
+/**
+ * Snap (category, sub_category) onto the taxonomy actually in force, so the DB
+ * can never hold a parent/child pair that does not exist. Same rules the call
+ * path applies inline; kept as a helper here so the email path cannot drift.
+ */
+function snapToTaxonomy(category, subCategory, { taxonomy, dynamic }) {
+  const map = new Map();
+  if (dynamic) {
+    for (const c of (taxonomy || [])) {
+      if (c?.name) map.set(c.name, new Set(Array.isArray(c.sub_categories) ? c.sub_categories : []));
+    }
+  } else {
+    for (const [name, subs] of Object.entries(CATEGORIZATION_SCHEMA)) map.set(name, new Set(subs));
+  }
+
+  let cat = cleanCategory(category) || 'Uncategorised';
+  let sub = cleanCategory(subCategory) || '-';
+
+  if (cat !== 'Uncategorised' && map.size > 0 && !map.has(cat)) {
+    logger.warn('[EmailAI] Unknown category — snapping to Uncategorised', { returned: cat });
+    return { category: 'Uncategorised', sub_category: '-' };
+  }
+  if (cat !== 'Uncategorised' && sub !== '-' && sub !== 'Other') {
+    const allowed = map.get(cat);
+    if (allowed && allowed.size > 0 && !allowed.has(sub)) {
+      logger.warn('[EmailAI] Sub-category outside parent — snapping to "Other"', { parent: cat, returned: sub });
+      sub = 'Other';
+    }
+  }
+  return { category: cat, sub_category: sub };
+}
+
+/**
+ * POST a text-only prompt to Gemini and return parsed JSON, applying the same
+ * global rate-limit gate and 429 → fallback-model behaviour the audio path uses.
+ * @returns {Promise<{ok: true, json: object, model: string, usedFallback: boolean}
+ *                  | {ok: false, status?: number, error: string, retryable: boolean}>}
+ */
+async function generateJson(prompt, { apiKey, model, fallbackModel, maxOutputTokens }) {
+  const buildUrl = m => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`;
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { response_mime_type: 'application/json', maxOutputTokens },
+  });
+  const post = m => fetchWithTimeout(
+    buildUrl(m),
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+    120_000
+  );
+
+  await awaitGeminiSlot(model);
+  let resp = await post(model);
+  let modelUsed = model;
+  let usedFallback = false;
+
+  const fallbackEnabled = !!fallbackModel && fallbackModel !== model;
+  if (resp.status === 429 && fallbackEnabled) {
+    markGeminiRateLimited(parseRetryAfter(resp.headers.get('retry-after')), 'email-primary', model);
+    if (getCooldown(fallbackModel) <= Date.now()) {
+      logger.warn('[EmailAI] Primary rate-limited, falling back', { primary: model, fallback: fallbackModel });
+      try { await resp.text(); } catch { /* release the socket */ }
+      await awaitGeminiSlot(fallbackModel);
+      resp = await post(fallbackModel);
+      modelUsed = fallbackModel;
+      usedFallback = true;
+    }
+  }
+
+  if (!resp.ok) {
+    if (resp.status === 429) markGeminiRateLimited(parseRetryAfter(resp.headers.get('retry-after')), 'email', modelUsed);
+    const text = await resp.text().catch(() => '');
+    return {
+      ok: false,
+      status: resp.status,
+      error: `Gemini email analysis failed (model=${modelUsed}): HTTP ${resp.status} ${text.slice(0, 300)}`,
+      // 4xx other than 429 means the request itself is wrong — retrying burns quota.
+      retryable: resp.status === 429 || resp.status >= 500,
+    };
+  }
+
+  const data = await resp.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) return { ok: false, error: 'No candidates returned from Gemini', retryable: true };
+
+  try {
+    return { ok: true, json: JSON.parse(sanitizeJsonResponse(text)), model: modelUsed, usedFallback };
+  } catch {
+    return { ok: false, error: 'Invalid JSON returned from Gemini', retryable: true };
+  }
+}
+
+/**
+ * Categorize ONE support email against CATEGORIZATION_SCHEMA.
+ *
+ * @param {object} email  As stored in the `emails` collection: subject,
+ *                        from_name, from_email, received_at, body_text,
+ *                        body_html, attachments.
+ * @param {object} opts   { callCategories, bugCategories } — the same live
+ *                        taxonomy collections the call worker passes.
+ * @returns {Promise<object>} { success, category, sub_category, summary,
+ *                        ai_insight, bugs, bug_category, email_category,
+ *                        email_sub_category, language, model_used,
+ *                        used_fallback } or { success: false, error, permanent }
+ */
+async function categorizeEmail(email = {}, { callCategories = [], bugCategories = [] } = {}, maxRetries = 3) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { success: false, error: 'GEMINI_API_KEY not set' };
+
+  const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+  const fallbackEnv = process.env.GEMINI_FALLBACK_MODEL;
+  const fallbackModel = (fallbackEnv === undefined ? 'gemini-2.5-flash-lite' : fallbackEnv).trim();
+  // Emails need far less headroom than a transcript — no audio to transcribe.
+  const maxOutputTokens = Math.max(512, Number(process.env.EMAIL_ANALYSIS_MAX_TOKENS) || 2048);
+  const useDynamicCategories = dynamicCategoriesEnabled();
+
+  const bodyText = emailToPlainText(email);
+  const limit = emailBodyCharLimit();
+  const trimmed = bodyText.length > limit
+    ? `${bodyText.slice(0, limit)}\n[… ${bodyText.length - limit} more characters omitted]`
+    : bodyText;
+
+  const attachmentNames = (email.attachments || []).map(a => a.filename).filter(Boolean);
+
+  const taxonomyTask = !useDynamicCategories ? '' : `8) Email Category & Sub-Category:
+   - Use the hierarchical taxonomy below: { "name": "<top-level>", "sub_categories": [...] }.
+   - Pick an email_category whose name best fits the ai_insight, then a
+     email_sub_category from THAT category's list — never another category's.
+   - If no top-level fits: email_category = "Uncategorised", email_sub_category = "-".
+   - If a top-level fits but no sub matches: email_sub_category = "Other".
+   TAXONOMY: ${JSON.stringify(callCategories)}
+
+`;
+  const taxonomyOutputKeys = !useDynamicCategories ? '' : `
+  "email_category": "",
+  "email_sub_category": "",`;
+  const bugCategoryTaskNo = useDynamicCategories ? 9 : 8;
+
+  const prompt = `
+You are analyzing ONE email sent to the UPTET-2026 candidate support helpline
+mailbox. The sender is a candidate (or their representative). You are reading
+only what the candidate wrote — there is no support reply to judge.
+
+RETURN ONLY ONE VALID JSON OBJECT.
+Do not include markdown, explanations, or any extra text.
+
+═══════════════════════════════════════════════════════
+STRICT FIELD OWNERSHIP — violating these rules is wrong
+═══════════════════════════════════════════════════════
+Every observation belongs to EXACTLY ONE field.
+
+  bugs          → owns ONLY software/portal malfunctions the candidate reports. Nothing else.
+
+  ai_insight    → owns a 4-5 word label for the CANDIDATE'S ISSUE ONLY. Never about
+                  formatting, language, attachments, or how the email was written.
+
+  summary       → owns a two-sentence factual recap: sentence 1 = what the candidate's
+                  problem is, sentence 2 = what they are asking support to do.
+
+  category /
+  sub_category  → own the query type per schema, based purely on what the candidate asks.
+
+═══════════════════════════════════════════════════════
+CONTENT UNCLEAR SPECIAL CASE — if category = "Content Unclear"
+═══════════════════════════════════════════════════════
+Use this ONLY when the email carries no identifiable request: an empty or
+near-empty body, a bare greeting, an attachment with no explanatory text, an
+automated bounce/out-of-office, or text too garbled to interpret. Then apply
+these EXACT values:
+  category      = "Content Unclear"
+  sub_category  = ""
+  summary       = "Email content insufficient for analysis."
+  ai_insight    = "-"
+  bugs          = "-"
+
+Do NOT use Content Unclear merely because the email is short, informal,
+misspelled, in Hindi, or written in Hinglish. A one-line request like
+"payment ho gaya form nahi bhara" IS classifiable.
+
+TASKS:
+1) Categorization:
+   - Choose exactly ONE category and ONE sub_category from the schema below.
+   - category MUST be a top-level key; sub_category MUST be a listed value under it.
+   - Do not invent or paraphrase schema names.
+   - Many of these emails mix English, Devanagari Hindi and Hinglish, often in one
+     sentence. Read all three; the language never changes the categorization.
+
+2) Multiple issues in one email:
+   - Candidates often raise two or three problems at once. Categorize the PRIMARY
+     issue — the one they lead with or ask for most explicitly — and mention the
+     secondary ones in the summary.
+
+3) Summary:
+   - Sentence 1: what is the candidate's problem?
+   - Sentence 2: what are they asking support to do about it?
+   - Include concrete identifiers they supply (registration number, exam level,
+     board, payment reference) when present — those drive resolution.
+   - Do NOT mention email formatting, attachments, or politeness.
+   - RIGHT: "The candidate's fee was debited twice for the same application. They
+            ask for one payment to be refunded and quote transaction ref 4471xx."
+
+4) AI Insight:
+   - A 4-5 word phrase describing the candidate's issue — nothing else.
+   - RIGHT: "Duplicate payment refund request" / "Appearing option missing dropdown"
+   - No full sentences. No trailing punctuation.
+
+5) Bug Detection:
+   - Only flag portal/software malfunctions explicitly described by the candidate:
+     a field that will not accept valid input, a missing dropdown option, a page
+     that will not load, a validation that rejects a correct value.
+   - A candidate not knowing HOW to do something is NOT a bug.
+   - RIGHT: "Qualification dropdown has no 'Appearing' option for D.El.Ed 2026."
+   - If none: return exactly "-".
+
+6) Language detection:
+   - List the languages the candidate wrote in, e.g. ["Hindi", "English"].
+   - Use "Hinglish" when Hindi is written in Roman script.
+
+7) Requested action:
+   - One of exactly: "Correction" | "Information" | "Refund" | "Technical Fix" |
+     "Document Upload" | "Status Update" | "Other".
+   - What the candidate wants done — independent of category.
+
+${taxonomyTask}${bugCategoryTaskNo}) Bug Category:
+   - If bugs is not "-", assign a bug_category from this list: ${JSON.stringify(bugCategories)}
+   - If the bug fits none of them, set bug_category to "Uncategorised".
+   - If bugs is "-", set bug_category to "-".
+
+CATEGORIZATION SCHEMA:
+${JSON.stringify(CATEGORIZATION_SCHEMA, null, 2)}
+
+═══════════════════════════════════════════════════════
+THE EMAIL
+═══════════════════════════════════════════════════════
+Subject: ${email.subject || '(no subject)'}
+From:    ${email.from_name ? `${email.from_name} <${email.from_email || ''}>` : (email.from_email || '(unknown)')}
+Date:    ${email.received_at ? new Date(email.received_at).toISOString() : '(unknown)'}
+${attachmentNames.length ? `Attachments: ${attachmentNames.join(', ')}\n` : ''}
+Body:
+${trimmed || '(empty body)'}
+
+OUTPUT FORMAT (must match exactly):
+{
+  "category": "",
+  "sub_category": "",
+  "summary": "",
+  "ai_insight": "",
+  "bugs": "",${taxonomyOutputKeys}
+  "bug_category": "",
+  "requested_action": "",
+  "language": [],
+  "error": null
+}
+`;
+
+  const startTime = Date.now();
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    if (attempt > 0) {
+      const waitMs = Math.min(2 ** attempt, 5) * 1000;
+      logger.debug('[EmailAI] Retry', { attempt: attempt + 1, maxRetries, waitSec: waitMs / 1000 });
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+
+    let result;
+    try {
+      result = await generateJson(prompt, { apiKey, model, fallbackModel, maxOutputTokens });
+    } catch (err) {
+      const isRetryable =
+        err.name === 'AbortError' ||
+        err.code === 'ECONNRESET' ||
+        err.code === 'ECONNREFUSED' ||
+        err.message?.toLowerCase().includes('timeout') ||
+        err.message?.toLowerCase().includes('connection');
+      if (isRetryable && attempt < maxRetries - 1) {
+        logger.warn('[EmailAI] Retryable error', { attempt: attempt + 1, error: err.message });
+        continue;
+      }
+      logger.error('[EmailAI] Fatal error', { error: err.message });
+      return { success: false, error: err.message };
+    }
+
+    if (!result.ok) {
+      if (result.retryable && attempt < maxRetries - 1) continue;
+      // A non-retryable HTTP error will fail identically forever — mark it
+      // permanent so the worker stops re-queueing it.
+      return { success: false, error: result.error, permanent: !result.retryable };
+    }
+
+    const analysis = result.json;
+    if (analysis.error) return { success: false, error: String(analysis.error) };
+
+    const isUnclear = cleanCategory(analysis.category) === 'Content Unclear';
+
+    // With the dynamic taxonomy off the model was never shown the live
+    // taxonomy, so seed the pair from the schema answer it *was* asked for —
+    // identical to how the call path fills call_category.
+    const rawPair = useDynamicCategories
+      ? { category: analysis.email_category, sub_category: analysis.email_sub_category }
+      : { category: analysis.category, sub_category: analysis.sub_category };
+
+    const snapped = isUnclear
+      ? { category: 'Uncategorised', sub_category: '-' }
+      : snapToTaxonomy(rawPair.category, rawPair.sub_category, { taxonomy: callCategories, dynamic: useDynamicCategories });
+
+    // The schema pair itself is validated too, so an invented name from task 1
+    // cannot reach the database.
+    const primary = isUnclear
+      ? { category: 'Content Unclear', sub_category: '' }
+      : snapToTaxonomy(analysis.category, analysis.sub_category, { taxonomy: null, dynamic: false });
+
+    logger.info('[EmailAI] Analysis complete', {
+      gmail_id: email.gmail_id,
+      category: primary.category,
+      totalSec: ((Date.now() - startTime) / 1000).toFixed(1),
+      model: result.model,
+      fallback: result.usedFallback,
+    });
+
+    return {
+      success:            true,
+      category:           primary.category,
+      sub_category:       primary.sub_category,
+      summary:            analysis.summary || '',
+      ai_insight:         isUnclear ? '-' : (analysis.ai_insight || ''),
+      bugs:               analysis.bugs || '-',
+      email_category:     snapped.category,
+      email_sub_category: snapped.sub_category,
+      bug_category:       (analysis.bugs && analysis.bugs !== '-') ? (analysis.bug_category || 'Uncategorised') : '-',
+      requested_action:   analysis.requested_action || 'Other',
+      language:           toLanguageArray(analysis.language),
+      model_used:         result.model,
+      used_fallback:      !!result.usedFallback,
+      body_chars:         bodyText.length,
+    };
+  }
+
+  return { success: false, error: 'Max retries exceeded' };
+}
+
+module.exports = {
+  categorizeRecording,
+  categorizeEmail,
+  emailToPlainText,
+  htmlToText,
+  stripQuotedText,
+  snapToTaxonomy,
+  CATEGORIZATION_SCHEMA,
+  detectTranscriptionLoop,
+  generateCategoryTaxonomy,
+  generaliseCategoryTaxonomy,
+};

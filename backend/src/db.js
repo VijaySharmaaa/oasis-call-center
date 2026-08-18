@@ -26,6 +26,15 @@ function getDb() {
           db.collection('call_analysis').createIndex({ status: 1, created_at: 1 }),
           db.collection('agents').createIndex({ agent_number: 1 }, { unique: true }),
           db.collection('click2call_pending').createIndex({ initiated_at: 1 }, { expireAfterSeconds: 1800 }),
+          db.collection('emails').createIndex({ gmail_id: 1 }, { unique: true }),
+          db.collection('emails').createIndex({ received_at: -1 }),
+          db.collection('emails').createIndex({ thread_id: 1 }),
+          db.collection('emails').createIndex({ from_email: 1 }),
+          db.collection('emails').createIndex({ is_unread: 1, received_at: -1 }),
+          db.collection('emails').createIndex({ category: 1, received_at: -1 }),
+          db.collection('email_analysis').createIndex({ gmail_id: 1 }, { unique: true }),
+          db.collection('email_analysis').createIndex({ status: 1, created_at: -1 }),
+          db.collection('email_analysis').createIndex({ category: 1 }),
         ]).then(() => db);
       })
       .catch(err => {
