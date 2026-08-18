@@ -58,7 +58,10 @@ function TicketDonut({ stats }) {
   const C = 2 * Math.PI * R;
   let offset = 0;
   return (
-    <svg viewBox="0 0 120 120" className="w-36 h-36 shrink-0">
+    <svg
+      viewBox="0 0 120 120"
+      className="w-32 h-32 lg:w-24 lg:h-24 min-[1544px]:w-28 min-[1544px]:h-28 shrink-0"
+    >
       <circle
         cx="60"
         cy="60"
@@ -371,7 +374,7 @@ export default function Dashboard({ onNavigate }) {
                 setDateFrom(val);
                 if (effectiveTo && val > effectiveTo) setDateTo(val);
               }}
-              className="px-2 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
+              className="px-1.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
             />
           </div>
           <div className="flex items-center gap-1.5">
@@ -492,7 +495,7 @@ export default function Dashboard({ onNavigate }) {
             </p>
             <div className="flex items-center gap-4">
               <TicketDonut stats={ticketStats} />
-              <div className="flex flex-col justify-center gap-2.5 lg:grid lg:grid-cols-2 lg:gap-x-6 lg:gap-y-3">
+              <div className="flex flex-col justify-center gap-2.5 min-[1544px]:grid min-[1544px]:grid-cols-2 min-[1544px]:gap-x-6 min-[1544px]:gap-y-3">
                 {Object.entries(TICKET_COLORS).map(([status, c]) => {
                   const count = ticketStats[status] || 0;
                   return (
