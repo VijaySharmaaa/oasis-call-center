@@ -178,6 +178,10 @@ async function processRecord(db, record) {
             language:          result.language,
             model_used:        result.model_used || null,
             used_fallback:     !!result.used_fallback,
+            // Token counts for the cost report. Absent on records analysed
+            // before this was captured, which the report states rather than
+            // treating as free.
+            usage:             result.usage || null,
             error:             null,
             last_error:        null,
             next_attempt_at:   null,

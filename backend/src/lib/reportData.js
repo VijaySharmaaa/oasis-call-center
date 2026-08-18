@@ -23,6 +23,7 @@
  */
 
 const { tagsOf } = require('./tags');
+const { costOf, totalCost, rateCard, displayCurrency } = require('../config/geminiPricing');
 
 /**
  * Values that occupy a category field without naming an issue.
@@ -155,26 +156,30 @@ function bucket(docs) {
  * whose documents are all dispositions has a count but no issue, which is a
  * real state and is reported as null rather than a fabricated category.
  *
+ * When `usageFor` is supplied each bucket also carries what its documents cost
+ * to analyse, which is what makes "cost per day" fall out of the same pass.
+ *
  * @param {object[]} docs
  * @param {string} dateField  created_at for calls, received_at for mail
  * @param {object} window     from rangeOf(): { start, days, granularity }
- * @returns {Array<{key: string, label: string, count: number, topCategory: string|null}>}
+ * @param {Function} [usageFor] doc -> the Gemini usage record, or null
+ * @returns {Array<{key, label, count, topCategory, costUsd, unpriced}>}
  */
-function timelineBuckets(docs, dateField, { start, days, granularity }) {
+function timelineBuckets(docs, dateField, { start, days, granularity }, usageFor) {
   const p = n => String(n).padStart(2, '0');
   const byHour = granularity === 'hour';
 
   // The spine, built first so empty buckets survive into the output.
   const slots = byHour
     ? Array.from({ length: 24 }, (_, i) => ({
-        key: p(i), label: `${p(i)}:00`, count: 0, _tally: new Map(),
+        key: p(i), label: `${p(i)}:00`, count: 0, costUsd: 0, unpriced: 0, _tally: new Map(),
       }))
     : Array.from({ length: days }, (_, i) => {
         const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
         return {
           key: toDateStr(day),
           label: `${p(day.getDate())}/${p(day.getMonth() + 1)}`,
-          count: 0, _tally: new Map(),
+          count: 0, costUsd: 0, unpriced: 0, _tally: new Map(),
         };
       });
 
@@ -190,13 +195,18 @@ function timelineBuckets(docs, dateField, { start, days, granularity }) {
     if (!slot) continue;          // outside the window — the caller over-fetched
     slot.count += 1;
 
+    if (usageFor) {
+      const { usd, priced } = costOf(usageFor(doc));
+      if (priced) slot.costUsd += usd; else slot.unpriced += 1;
+    }
+
     for (const tag of tagsOf(doc)) {
       if (isReserved(tag?.category)) continue;
       slot._tally.set(tag.category, (slot._tally.get(tag.category) || 0) + 1);
     }
   }
 
-  return slots.map(({ key, label, count, _tally }) => {
+  return slots.map(({ key, label, count, costUsd, unpriced, _tally }) => {
     let topCategory = null;
     let best = 0;
     for (const [category, n] of _tally) {
@@ -206,7 +216,7 @@ function timelineBuckets(docs, dateField, { start, days, granularity }) {
         best = n; topCategory = category;
       }
     }
-    return { key, label, count, topCategory };
+    return { key, label, count, topCategory, costUsd: Math.round(costUsd * 1e6) / 1e6, unpriced };
   });
 }
 
@@ -370,8 +380,14 @@ async function collectCalls(db, window) {
     ticketsByCall.get(t.call_id).push(t);
   }
 
+  // Cost is attributed to WHEN THE CALL HAPPENED, not when the analysis ran, so
+  // it lines up with every other figure on the page. A call re-analysed later
+  // still counts against the day it came in.
+  const usageOf = call => analysisByCall.get(call.call_id)?.usage ?? null;
+
   return {
-    current, previous, merged, ticketsByCall,
+    current, previous, merged, ticketsByCall, usageOf,
+    cost: totalCost(answered.map(usageOf)),
     summary: {
       total:      current.length,
       answered:   answered.length,
@@ -411,6 +427,17 @@ async function collectEmails(db, window) {
     : [];
   const { repliedIds, sentMessagesSeen } = detectReplies(inbound, sentMessages);
 
+  // Usage lives on email_analysis; the email document only mirrors the
+  // category fields, so the cost figures need their own read.
+  const gmailIds = inbound.map(e => e.gmail_id).filter(Boolean);
+  const analyses = gmailIds.length
+    ? await db.collection('email_analysis')
+        .find({ gmail_id: { $in: gmailIds }, status: 'completed' })
+        .toArray()
+    : [];
+  const analysisByGmailId = new Map(analyses.map(a => [a.gmail_id, a]));
+  const usageOf = email => analysisByGmailId.get(email.gmail_id)?.usage ?? null;
+
   const emailIds = inbound.map(e => String(e._id));
   const tickets = emailIds.length
     ? await db.collection('tickets').find({ email_id: { $in: emailIds } }).toArray()
@@ -426,7 +453,8 @@ async function collectEmails(db, window) {
   const replied = inbound.filter(e => repliedIds.has(String(e._id)));
 
   return {
-    current: inbound, previous: inboundPrev, ticketsByEmail, sentMessagesSeen,
+    current: inbound, previous: inboundPrev, ticketsByEmail, sentMessagesSeen, usageOf,
+    cost: totalCost(inbound.map(usageOf)),
     summary: {
       total:             inbound.length,
       repliedResolved:   bucket(replied.filter(isResolved)),
@@ -470,8 +498,17 @@ async function buildReport(db, { from, to = from, channel = 'all' } = {}) {
   }));
 
   const prevWindow = { ...window, start: window.prevStart };
-  const series = (docs, field) => timelineBuckets(docs, field, window);
+  const series = (docs, field, usageFor) => timelineBuckets(docs, field, window, usageFor);
+  // The comparison window carries no cost: it exists to shape the red line, and
+  // pricing a window nobody asked about would double the reported spend.
   const prevSeries = (docs, field) => timelineBuckets(docs, field, prevWindow);
+
+  const currency = displayCurrency();
+  const combined = {
+    usd:      (calls?.cost.usd      ?? 0) + (emails?.cost.usd      ?? 0),
+    priced:   (calls?.cost.priced   ?? 0) + (emails?.cost.priced   ?? 0),
+    unpriced: (calls?.cost.unpriced ?? 0) + (emails?.cost.unpriced ?? 0),
+  };
 
   return {
     from, to,
@@ -490,11 +527,11 @@ async function buildReport(db, { from, to = from, channel = 'all' } = {}) {
 
     timeline: {
       calls: calls && {
-        current:  series(calls.current, 'created_at'),
+        current:  series(calls.current, 'created_at', calls.usageOf),
         previous: prevSeries(calls.previous, 'created_at'),
       },
       emails: emails && {
-        current:  series(emails.current, 'received_at'),
+        current:  series(emails.current, 'received_at', emails.usageOf),
         previous: prevSeries(emails.previous, 'received_at'),
       },
     },
@@ -502,6 +539,20 @@ async function buildReport(db, { from, to = from, channel = 'all' } = {}) {
     feedback: {
       calls:  calls?.feedback  ?? null,
       emails: emails?.feedback ?? null,
+    },
+
+    // What the AI analysis of this window cost. `unpriced` is the number of
+    // analyses whose spend could not be established — no usage recorded, or a
+    // model with no rate — so the total always reads as a floor, never as a
+    // complete bill that happens to omit them.
+    cost: {
+      total:    { ...combined, usd: Math.round(combined.usd * 1e6) / 1e6 },
+      calls:    calls?.cost  ?? null,
+      emails:   emails?.cost ?? null,
+      currency: currency.code,
+      perUsd:   currency.perUsd,
+      // Printed on the page so a stale rate is visible rather than implied.
+      rates:    rateCard(),
     },
 
     // Everything the report cannot prove, stated rather than implied. The page

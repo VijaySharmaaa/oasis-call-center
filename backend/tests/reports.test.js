@@ -55,10 +55,16 @@ function seed() {
     ],
 
     call_analysis: [
+      // c1/c2 carry usage; c3 deliberately does not, standing in for records
+      // analysed before token capture existed.
       { call_id: 'c1', status: 'completed', call_resolved: 'Yes',
+        usage: { model: 'gemini-2.5-flash', prompt_tokens: 1_000_000, output_tokens: 0,
+                 modalities: { AUDIO: 1_000_000 } },
         tags: [{ category: 'Payment & Fee', sub_category: 'Duplicate Payment Refund Query' },
                { category: 'Uploads & Documents', sub_category: 'Photograph Upload Issue' }] },
       { call_id: 'c2', status: 'completed', call_resolved: 'No',
+        usage: { model: 'gemini-2.5-flash', prompt_tokens: 1_000_000, output_tokens: 0,
+                 modalities: { AUDIO: 1_000_000 } },
         tags: [{ category: 'Payment & Fee', sub_category: 'Fee Amount Query' }] },
       { call_id: 'c3', status: 'completed', call_resolved: 'Partial',
         tags: [{ category: 'Login & Account Access', sub_category: 'Account Locked / Blocked' }] },
@@ -84,6 +90,14 @@ function seed() {
       // yesterday
       { _id: 'ep1', gmail_id: 'gp1', thread_id: 'thp', received_at: yesterdayAt(10),
         label_ids: ['INBOX'], tags: [{ category: 'Exam Information', sub_category: 'Syllabus Query' }] },
+    ],
+
+    email_analysis: [
+      { gmail_id: 'g1', status: 'completed',
+        usage: { model: 'gemini-2.5-flash-lite', prompt_tokens: 1_000_000, output_tokens: 0 } },
+      { gmail_id: 'g2', status: 'completed',
+        usage: { model: 'gemini-2.5-flash-lite', prompt_tokens: 1_000_000, output_tokens: 0 } },
+      // g3 has no usage recorded.
     ],
 
     tickets: [
@@ -576,5 +590,85 @@ describe('timelineBuckets', () => {
   it('labels day buckets DD/MM for the axis', () => {
     const week = rangeOf('2026-08-12', '2026-08-18');
     expect(timelineBuckets([], 'created_at', week)[0].label).toBe('12/08');
+  });
+});
+
+/* ── Gemini cost ───────────────────────────────────────────────────────── */
+
+describe('gemini cost', () => {
+  const FLASH_AUDIO = 1.00;   // USD per 1M audio-input tokens
+  const LITE_TEXT   = 0.10;   // USD per 1M text-input tokens
+
+  it('prices call analysis at the audio rate', async () => {
+    const { body } = await getReport().expect(200);
+    // c1 + c2, one million audio tokens each.
+    expect(body.cost.calls.usd).toBeCloseTo(2 * FLASH_AUDIO, 6);
+    expect(body.cost.calls.priced).toBe(2);
+  });
+
+  it('prices mail analysis at its own model rate', async () => {
+    const { body } = await getReport().expect(200);
+    expect(body.cost.emails.usd).toBeCloseTo(2 * LITE_TEXT, 6);
+  });
+
+  it('totals the two channels', async () => {
+    const { body } = await getReport().expect(200);
+    expect(body.cost.total.usd).toBeCloseTo(2 * FLASH_AUDIO + 2 * LITE_TEXT, 6);
+  });
+
+  it('counts analyses it could not price rather than treating them as free', async () => {
+    const { body } = await getReport().expect(200);
+    // c3 and c5 have no usage; so does the third mail.
+    expect(body.cost.calls.unpriced).toBeGreaterThan(0);
+    expect(body.cost.emails.unpriced).toBe(1);
+    expect(body.cost.total.unpriced).toBe(body.cost.calls.unpriced + body.cost.emails.unpriced);
+  });
+
+  it('reports the tokens behind the figure', async () => {
+    const { body } = await getReport().expect(200);
+    expect(body.cost.calls.tokens.audio).toBe(2_000_000);
+    expect(body.cost.emails.tokens.prompt).toBe(2_000_000);
+  });
+
+  it('prints the rate card it used, so a stale rate is visible', async () => {
+    const { body } = await getReport().expect(200);
+    expect(body.cost.rates['gemini-2.5-flash']).toEqual({ text: 0.30, audio: 1.00, output: 2.50 });
+    expect(body.cost.currency).toBe('USD');
+  });
+
+  it('attributes cost to each hour of a single day', async () => {
+    const { body } = await getReport().expect(200);
+    // c1 and c2 both landed in the 09:00 hour.
+    expect(body.timeline.calls.current[9].costUsd).toBeCloseTo(2 * FLASH_AUDIO, 6);
+    expect(body.timeline.calls.current[11].costUsd).toBe(0);
+    expect(body.timeline.calls.current[11].unpriced).toBe(1);   // c3, no usage
+  });
+
+  it('attributes cost to each day of a range', async () => {
+    const { body } = await getRange('from=2026-08-17&to=2026-08-18').expect(200);
+    const [day17, day18] = body.timeline.calls.current;
+
+    expect(day17.key).toBe('2026-08-17');
+    expect(day17.costUsd).toBe(0);              // p1 has no analysis at all
+    expect(day18.costUsd).toBeCloseTo(2 * FLASH_AUDIO, 6);
+  });
+
+  it('never prices the comparison window — it would double the reported spend', async () => {
+    const { body } = await getReport().expect(200);
+    const previousSpend = body.timeline.calls.previous.reduce((sum, b) => sum + b.costUsd, 0);
+    expect(previousSpend).toBe(0);
+  });
+
+  it('drops the mail cost entirely from a calls-only report', async () => {
+    const { body } = await getRange(`date=${D}&channel=calls`).expect(200);
+    expect(body.cost.emails).toBeNull();
+    expect(body.cost.calls.usd).toBeCloseTo(2 * FLASH_AUDIO, 6);
+    expect(body.cost.total.usd).toBeCloseTo(2 * FLASH_AUDIO, 6);
+  });
+
+  it('drops the call cost entirely from a mails-only report', async () => {
+    const { body } = await getRange(`date=${D}&channel=emails`).expect(200);
+    expect(body.cost.calls).toBeNull();
+    expect(body.cost.total.usd).toBeCloseTo(2 * LITE_TEXT, 6);
   });
 });

@@ -240,6 +240,7 @@ async function processRecord(db, record) {
         body_chars:         result.body_chars,
         model_used:         result.model_used || null,
         used_fallback:      !!result.used_fallback,
+        usage:              result.usage || null,
         error:              null,
         last_error:         null,
         next_attempt_at:    null,

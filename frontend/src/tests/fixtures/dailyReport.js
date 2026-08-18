@@ -16,7 +16,7 @@ export const dailyReport  = {
   "granularity": "hour",
   "previousFrom": "2026-08-17",
   "previousTo": "2026-08-17",
-  "generatedAt": "2026-08-18T12:33:37.687Z",
+  "generatedAt": "2026-08-18T13:08:42.196Z",
   "calls": {
     "total": 93,
     "answered": 75,
@@ -501,145 +501,193 @@ export const dailyReport  = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 3,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.022395,
+          "unpriced": 1
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 9,
-          "topCategory": "Uploads & Documents"
+          "topCategory": "Uploads & Documents",
+          "costUsd": 0.08252,
+          "unpriced": 2
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 14,
-          "topCategory": "Identity Verification"
+          "topCategory": "Identity Verification",
+          "costUsd": 0.123625,
+          "unpriced": 4
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 17,
-          "topCategory": "Login & Account Access"
+          "topCategory": "Login & Account Access",
+          "costUsd": 0.151935,
+          "unpriced": 5
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 11,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.104395,
+          "unpriced": 2
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.05171,
+          "unpriced": 1
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 9,
-          "topCategory": "Payment & Fee"
+          "topCategory": "Payment & Fee",
+          "costUsd": 0.08252,
+          "unpriced": 2
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 12,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.104395,
+          "unpriced": 3
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 8,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.06635,
+          "unpriced": 2
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 4,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.03474,
+          "unpriced": 1
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ],
       "previous": [
@@ -647,145 +695,193 @@ export const dailyReport  = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 2,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 9,
-          "topCategory": "Identity Verification"
+          "topCategory": "Identity Verification",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 11,
-          "topCategory": "Exam Information"
+          "topCategory": "Exam Information",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 8,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 5,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 7,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 8,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 6,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 3,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ]
     },
@@ -795,145 +891,193 @@ export const dailyReport  = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 4,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0.001044,
+          "unpriced": 1
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 7,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.002376,
+          "unpriced": 1
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 9,
-          "topCategory": "Uploads & Documents"
+          "topCategory": "Uploads & Documents",
+          "costUsd": 0.003424,
+          "unpriced": 1
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 5,
-          "topCategory": "Login & Account Access"
+          "topCategory": "Login & Account Access",
+          "costUsd": 0.001456,
+          "unpriced": 1
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 3,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0.000664,
+          "unpriced": 1
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.0019,
+          "unpriced": 1
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 4,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0.001044,
+          "unpriced": 1
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 2,
-          "topCategory": "Identity Verification"
+          "topCategory": "Identity Verification",
+          "costUsd": 0.000316,
+          "unpriced": 1
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ],
       "previous": [
@@ -941,145 +1085,193 @@ export const dailyReport  = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 3,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 5,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 4,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 4,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 3,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ]
     }
@@ -1302,6 +1494,57 @@ export const dailyReport  = {
       }
     ]
   },
+  "cost": {
+    "total": {
+      "usd": 0.836809,
+      "priced": 102,
+      "unpriced": 13
+    },
+    "calls": {
+      "usd": 0.824585,
+      "priced": 70,
+      "unpriced": 5,
+      "tokens": {
+        "prompt": 875000,
+        "output": 63000,
+        "audio": 787500
+      }
+    },
+    "emails": {
+      "usd": 0.012224,
+      "priced": 32,
+      "unpriced": 8,
+      "tokens": {
+        "prompt": 79160,
+        "output": 10770,
+        "audio": 0
+      }
+    },
+    "currency": "USD",
+    "perUsd": 1,
+    "rates": {
+      "gemini-2.5-flash": {
+        "text": 0.3,
+        "audio": 1,
+        "output": 2.5
+      },
+      "gemini-2.5-flash-lite": {
+        "text": 0.1,
+        "audio": 0.3,
+        "output": 0.4
+      },
+      "gemini-1.5-flash": {
+        "text": 0.075,
+        "audio": 0.3,
+        "output": 0.3
+      },
+      "gemini-1.5-flash-8b": {
+        "text": 0.0375,
+        "audio": 0.15,
+        "output": 0.15
+      }
+    }
+  },
   "caveats": {
     "sentMailVisible": true,
     "followUpMailTracked": false,
@@ -1318,7 +1561,7 @@ export const rangeReport  = {
   "granularity": "day",
   "previousFrom": "2026-08-15",
   "previousTo": "2026-08-16",
-  "generatedAt": "2026-08-18T12:33:37.689Z",
+  "generatedAt": "2026-08-18T13:08:42.199Z",
   "calls": {
     "total": 158,
     "answered": 140,
@@ -1817,13 +2060,17 @@ export const rangeReport  = {
           "key": "2026-08-17",
           "label": "17/08",
           "count": 65,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 65
         },
         {
           "key": "2026-08-18",
           "label": "18/08",
           "count": 93,
-          "topCategory": "Uploads & Documents"
+          "topCategory": "Uploads & Documents",
+          "costUsd": 0.824585,
+          "unpriced": 23
         }
       ],
       "previous": [
@@ -1831,13 +2078,17 @@ export const rangeReport  = {
           "key": "2026-08-15",
           "label": "15/08",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "2026-08-16",
           "label": "16/08",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ]
     },
@@ -1847,13 +2098,17 @@ export const rangeReport  = {
           "key": "2026-08-17",
           "label": "17/08",
           "count": 25,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 25
         },
         {
           "key": "2026-08-18",
           "label": "18/08",
           "count": 40,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.012224,
+          "unpriced": 8
         }
       ],
       "previous": [
@@ -1861,13 +2116,17 @@ export const rangeReport  = {
           "key": "2026-08-15",
           "label": "15/08",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "2026-08-16",
           "label": "16/08",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ]
     }
@@ -2090,6 +2349,57 @@ export const rangeReport  = {
       }
     ]
   },
+  "cost": {
+    "total": {
+      "usd": 0.836809,
+      "priced": 102,
+      "unpriced": 103
+    },
+    "calls": {
+      "usd": 0.824585,
+      "priced": 70,
+      "unpriced": 70,
+      "tokens": {
+        "prompt": 875000,
+        "output": 63000,
+        "audio": 787500
+      }
+    },
+    "emails": {
+      "usd": 0.012224,
+      "priced": 32,
+      "unpriced": 33,
+      "tokens": {
+        "prompt": 79160,
+        "output": 10770,
+        "audio": 0
+      }
+    },
+    "currency": "USD",
+    "perUsd": 1,
+    "rates": {
+      "gemini-2.5-flash": {
+        "text": 0.3,
+        "audio": 1,
+        "output": 2.5
+      },
+      "gemini-2.5-flash-lite": {
+        "text": 0.1,
+        "audio": 0.3,
+        "output": 0.4
+      },
+      "gemini-1.5-flash": {
+        "text": 0.075,
+        "audio": 0.3,
+        "output": 0.3
+      },
+      "gemini-1.5-flash-8b": {
+        "text": 0.0375,
+        "audio": 0.15,
+        "output": 0.15
+      }
+    }
+  },
   "caveats": {
     "sentMailVisible": true,
     "followUpMailTracked": false,
@@ -2106,7 +2416,7 @@ export const callsReport  = {
   "granularity": "hour",
   "previousFrom": "2026-08-17",
   "previousTo": "2026-08-17",
-  "generatedAt": "2026-08-18T12:33:37.690Z",
+  "generatedAt": "2026-08-18T13:08:42.200Z",
   "calls": {
     "total": 93,
     "answered": 75,
@@ -2338,145 +2648,193 @@ export const callsReport  = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 3,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.022395,
+          "unpriced": 1
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 9,
-          "topCategory": "Uploads & Documents"
+          "topCategory": "Uploads & Documents",
+          "costUsd": 0.08252,
+          "unpriced": 2
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 14,
-          "topCategory": "Identity Verification"
+          "topCategory": "Identity Verification",
+          "costUsd": 0.123625,
+          "unpriced": 4
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 17,
-          "topCategory": "Login & Account Access"
+          "topCategory": "Login & Account Access",
+          "costUsd": 0.151935,
+          "unpriced": 5
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 11,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.104395,
+          "unpriced": 2
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.05171,
+          "unpriced": 1
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 9,
-          "topCategory": "Payment & Fee"
+          "topCategory": "Payment & Fee",
+          "costUsd": 0.08252,
+          "unpriced": 2
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 12,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.104395,
+          "unpriced": 3
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 8,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.06635,
+          "unpriced": 2
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 4,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0.03474,
+          "unpriced": 1
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ],
       "previous": [
@@ -2484,145 +2842,193 @@ export const callsReport  = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 2,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 9,
-          "topCategory": "Identity Verification"
+          "topCategory": "Identity Verification",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 11,
-          "topCategory": "Exam Information"
+          "topCategory": "Exam Information",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 8,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 5,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 7,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 8,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 6,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 3,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ]
     },
@@ -2737,6 +3143,48 @@ export const callsReport  = {
     ],
     "emails": null
   },
+  "cost": {
+    "total": {
+      "usd": 0.824585,
+      "priced": 70,
+      "unpriced": 5
+    },
+    "calls": {
+      "usd": 0.824585,
+      "priced": 70,
+      "unpriced": 5,
+      "tokens": {
+        "prompt": 875000,
+        "output": 63000,
+        "audio": 787500
+      }
+    },
+    "emails": null,
+    "currency": "USD",
+    "perUsd": 1,
+    "rates": {
+      "gemini-2.5-flash": {
+        "text": 0.3,
+        "audio": 1,
+        "output": 2.5
+      },
+      "gemini-2.5-flash-lite": {
+        "text": 0.1,
+        "audio": 0.3,
+        "output": 0.4
+      },
+      "gemini-1.5-flash": {
+        "text": 0.075,
+        "audio": 0.3,
+        "output": 0.3
+      },
+      "gemini-1.5-flash-8b": {
+        "text": 0.0375,
+        "audio": 0.15,
+        "output": 0.15
+      }
+    }
+  },
   "caveats": {
     "sentMailVisible": null,
     "followUpMailTracked": false,
@@ -2753,7 +3201,7 @@ export const emailsReport = {
   "granularity": "hour",
   "previousFrom": "2026-08-17",
   "previousTo": "2026-08-17",
-  "generatedAt": "2026-08-18T12:33:37.692Z",
+  "generatedAt": "2026-08-18T13:08:42.201Z",
   "calls": null,
   "emails": {
     "total": 40,
@@ -3060,145 +3508,193 @@ export const emailsReport = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 4,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0.001044,
+          "unpriced": 1
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 7,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.002376,
+          "unpriced": 1
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 9,
-          "topCategory": "Uploads & Documents"
+          "topCategory": "Uploads & Documents",
+          "costUsd": 0.003424,
+          "unpriced": 1
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 5,
-          "topCategory": "Login & Account Access"
+          "topCategory": "Login & Account Access",
+          "costUsd": 0.001456,
+          "unpriced": 1
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 3,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0.000664,
+          "unpriced": 1
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0.0019,
+          "unpriced": 1
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 4,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0.001044,
+          "unpriced": 1
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 2,
-          "topCategory": "Identity Verification"
+          "topCategory": "Identity Verification",
+          "costUsd": 0.000316,
+          "unpriced": 1
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ],
       "previous": [
@@ -3206,145 +3702,193 @@ export const emailsReport = {
           "key": "00",
           "label": "00:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "01",
           "label": "01:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "02",
           "label": "02:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "03",
           "label": "03:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "04",
           "label": "04:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "05",
           "label": "05:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "06",
           "label": "06:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "07",
           "label": "07:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "08",
           "label": "08:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "09",
           "label": "09:00",
           "count": 3,
-          "topCategory": "Educational Qualifications"
+          "topCategory": "Educational Qualifications",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "10",
           "label": "10:00",
           "count": 5,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "11",
           "label": "11:00",
           "count": 6,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "12",
           "label": "12:00",
           "count": 4,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "13",
           "label": "13:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "14",
           "label": "14:00",
           "count": 4,
-          "topCategory": "Admit Card & Certificate"
+          "topCategory": "Admit Card & Certificate",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "15",
           "label": "15:00",
           "count": 3,
-          "topCategory": "Amendment & Post-Submission"
+          "topCategory": "Amendment & Post-Submission",
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "16",
           "label": "16:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "17",
           "label": "17:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "18",
           "label": "18:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "19",
           "label": "19:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "20",
           "label": "20:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "21",
           "label": "21:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "22",
           "label": "22:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         },
         {
           "key": "23",
           "label": "23:00",
           "count": 0,
-          "topCategory": null
+          "topCategory": null,
+          "costUsd": 0,
+          "unpriced": 0
         }
       ]
     }
@@ -3461,6 +4005,48 @@ export const emailsReport = {
         ]
       }
     ]
+  },
+  "cost": {
+    "total": {
+      "usd": 0.012224,
+      "priced": 32,
+      "unpriced": 8
+    },
+    "calls": null,
+    "emails": {
+      "usd": 0.012224,
+      "priced": 32,
+      "unpriced": 8,
+      "tokens": {
+        "prompt": 79160,
+        "output": 10770,
+        "audio": 0
+      }
+    },
+    "currency": "USD",
+    "perUsd": 1,
+    "rates": {
+      "gemini-2.5-flash": {
+        "text": 0.3,
+        "audio": 1,
+        "output": 2.5
+      },
+      "gemini-2.5-flash-lite": {
+        "text": 0.1,
+        "audio": 0.3,
+        "output": 0.4
+      },
+      "gemini-1.5-flash": {
+        "text": 0.075,
+        "audio": 0.3,
+        "output": 0.3
+      },
+      "gemini-1.5-flash-8b": {
+        "text": 0.0375,
+        "audio": 0.15,
+        "output": 0.15
+      }
+    }
   },
   "caveats": {
     "sentMailVisible": true,

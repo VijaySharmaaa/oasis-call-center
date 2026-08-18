@@ -1,0 +1,63 @@
+# Local smoke-test overlay. Used ON TOP of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#
+# It exists because the base compose file cannot run on its own machine:
+#   • backend/.env sets MONGODB_URI=mongodb://localhost:27017, and inside a
+#     container "localhost" is the container itself — the base file declares no
+#     mongo service, so the backend has nothing to connect to. The deployed host
+#     supplies its own mongo container; this file is that, for a laptop.
+#   • the workers default to ON with a live Gemini key and the real support
+#     mailbox, so an unguarded local run would pull real mail and spend real
+#     quota. They are forced off here; turn them on deliberately if that is what
+#     you are testing.
+#
+# Ports are shifted off 80/27017 so this cannot collide with anything already
+# running on the machine.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: oasis-mongo-local
+    restart: unless-stopped
+    # Bound to loopback only — a local smoke test has no business listening on
+    # the network.
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - oasis-mongo-data:/data/db
+    networks:
+      - oasis
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  backend:
+    environment:
+      # Overrides the value in backend/.env — compose `environment` wins over
+      # `env_file`, so the container reaches the mongo service above.
+      MONGODB_URI: mongodb://mongo:27017/oasis
+      # Off by default: a smoke test should not touch the real mailbox or bill
+      # the Gemini account. Flip either to `true` to exercise that path.
+      GMAIL_SYNC_ENABLED: "false"
+      EMAIL_ANALYSIS_ENABLED: "false"
+      LOG_LEVEL: info
+    ports:
+      # Direct API access for curl, bypassing nginx.
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    # !override replaces the base file's "80:80" instead of appending to it —
+    # compose merges port lists by default, which would claim 80 as well.
+    ports: !override
+      # 80 is frequently taken on a dev machine.
+      - "127.0.0.1:8080:80"
+
+volumes:
+  oasis-mongo-data:
