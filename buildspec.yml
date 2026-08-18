@@ -3,37 +3,96 @@ version: 0.2
 env:
   variables:
     AWS_DEFAULT_REGION: ap-south-1
-    ACCOUNT_ID: 461864990714
-    BACKEND_REPO: 461864990714.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-backend
-    FRONTEND_REPO: 461864990714.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-frontend
+    ACCOUNT_ID: "970776445824"
+    BACKEND_REPO: "970776445824.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-backend"
+    FRONTEND_REPO: "970776445824.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-frontend"
 
 phases:
+
   pre_build:
     commands:
-      - echo "Login to ECR"
-      - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 461864990714.dkr.ecr.ap-south-1.amazonaws.com
-      - echo "Getting commit tag"
+      - echo "========================================"
+      - echo "Starting OTR IVR Docker Build"
+      - echo "========================================"
+
+      - echo "AWS Region: $AWS_DEFAULT_REGION"
+      - echo "Account ID: $ACCOUNT_ID"
+      - echo "Commit SHA: $CODEBUILD_RESOLVED_SOURCE_VERSION"
+
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin 970776445824.dkr.ecr.ap-south-1.amazonaws.com
+
+      - echo "Generating image tag..."
       - TAG=$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | cut -c 1-7)
-      - echo "Tag = $TAG"
+      - echo "Image Tag: $TAG"
+
+      - echo "Checking repository structure..."
+      - pwd
+      - ls -la
+
+      - echo "Checking backend..."
+      - ls -la ./backend
+      - test -f ./backend/Dockerfile
+      - test -f ./backend/package.json
+      - test -f ./backend/package-lock.json
+
+      - echo "Checking frontend..."
+      - ls -la ./frontend
+      - test -f ./frontend/Dockerfile
 
   build:
     commands:
-      - echo "Build Backend"
+
+      - echo "========================================"
+      - echo "Building Backend Docker Image"
+      - echo "========================================"
+
       - docker build -t backend:$TAG ./backend
+
+      - echo "Tagging Backend image..."
       - docker tag backend:$TAG $BACKEND_REPO:$TAG
       - docker tag backend:$TAG $BACKEND_REPO:dev1
 
-      - echo "Build Frontend"
+      - echo "========================================"
+      - echo "Building Frontend Docker Image"
+      - echo "========================================"
+
       - docker build -t frontend:$TAG ./frontend
+
+      - echo "Tagging Frontend image..."
       - docker tag frontend:$TAG $FRONTEND_REPO:$TAG
       - docker tag frontend:$TAG $FRONTEND_REPO:dev1
 
   post_build:
     commands:
-      - echo "Push Backend"
+
+      - echo "========================================"
+      - echo "Pushing Backend Images"
+      - echo "========================================"
+
       - docker push $BACKEND_REPO:$TAG
       - docker push $BACKEND_REPO:dev1
 
-      - echo "Push Frontend"
+      - echo "========================================"
+      - echo "Pushing Frontend Images"
+      - echo "========================================"
+
       - docker push $FRONTEND_REPO:$TAG
       - docker push $FRONTEND_REPO:dev1
+
+      - echo "========================================"
+      - echo "Creating imagedefinitions.json"
+      - echo "========================================"
+
+      - printf '[{"name":"otr-ivr-backend","imageUri":"%s"},{"name":"otr-ivr-frontend","imageUri":"%s"}]' "$BACKEND_REPO:$TAG" "$FRONTEND_REPO:$TAG" > imagedefinitions.json
+
+      - echo "Generated imagedefinitions.json:"
+      - cat imagedefinitions.json
+
+      - echo "========================================"
+      - echo "Build completed successfully"
+      - echo "========================================"
+
+artifacts:
+  files:
+    - imagedefinitions.json
