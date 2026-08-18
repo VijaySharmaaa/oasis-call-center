@@ -1119,6 +1119,9 @@ OUTPUT FORMAT (must match exactly):
       }
 
       const resultData = await genResp.json();
+      // Captured before any early return below, so a call that fails
+      // validation still accounts for the tokens it already burned.
+      const usage = extractUsage(resultData, modelUsed);
       const candidates = resultData?.candidates;
       if (!candidates?.length) {
         if (attempt < maxRetries - 1) continue;
@@ -1222,6 +1225,7 @@ OUTPUT FORMAT (must match exactly):
         language:          toLanguageArray(analysis.language),
         model_used:        modelUsed,
         used_fallback:     usedFallback,
+        usage,
       };
 
     } catch (err) {
@@ -1331,6 +1335,38 @@ function emailToPlainText(email = {}) {
     ? email.body_text
     : htmlToText(email.body_html);
   return stripQuotedText(raw);
+}
+
+/**
+ * Token usage from a Gemini response, in the shape the report prices.
+ *
+ * The modality split matters: the 2.5 models charge audio input at several
+ * times the text rate, and a call recording is almost all audio tokens. Where
+ * Gemini does not itemise modalities, the breakdown is simply absent and the
+ * pricing side charges the whole prompt at the text rate.
+ *
+ * Returns null when the response carried no usage block, so "not recorded" is
+ * distinguishable from "zero tokens".
+ *
+ * @param {object} data  a parsed generateContent response
+ * @param {string} model the model that actually served the request
+ */
+function extractUsage(data, model) {
+  const meta = data?.usageMetadata;
+  if (!meta) return null;
+
+  const modalities = {};
+  for (const part of meta.promptTokensDetails || []) {
+    if (part?.modality) modalities[part.modality] = (modalities[part.modality] || 0) + (Number(part.tokenCount) || 0);
+  }
+
+  return {
+    model,
+    prompt_tokens: Number(meta.promptTokenCount)     || 0,
+    output_tokens: Number(meta.candidatesTokenCount) || 0,
+    total_tokens:  Number(meta.totalTokenCount)      || 0,
+    ...(Object.keys(modalities).length ? { modalities } : {}),
+  };
 }
 
 /**
@@ -1463,7 +1499,13 @@ async function generateJson(prompt, { apiKey, model, fallbackModel, maxOutputTok
   if (!text) return { ok: false, error: 'No candidates returned from Gemini', retryable: true };
 
   try {
-    return { ok: true, json: JSON.parse(sanitizeJsonResponse(text)), model: modelUsed, usedFallback };
+    return {
+      ok: true,
+      json: JSON.parse(sanitizeJsonResponse(text)),
+      model: modelUsed,
+      usedFallback,
+      usage: extractUsage(data, modelUsed),
+    };
   } catch {
     return { ok: false, error: 'Invalid JSON returned from Gemini', retryable: true };
   }
@@ -1732,6 +1774,7 @@ OUTPUT FORMAT (must match exactly):
       language:           toLanguageArray(analysis.language),
       model_used:         result.model,
       used_fallback:      !!result.usedFallback,
+      usage:              result.usage || null,
       body_chars:         bodyText.length,
     };
   }
@@ -1749,6 +1792,7 @@ module.exports = {
   snapTags,
   MAX_TAGS,
   CATEGORIZATION_SCHEMA,
+  extractUsage,
   detectTranscriptionLoop,
   generateCategoryTaxonomy,
   generaliseCategoryTaxonomy,

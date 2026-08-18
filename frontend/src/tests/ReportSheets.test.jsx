@@ -13,6 +13,7 @@ import ReportSheets from '../components/report/ReportSheets';
 import { ddmmyyyy } from '../lib/reportDate';
 import { dailyReport, rangeReport, callsReport, emailsReport } from './fixtures/dailyReport';
 import { CATEGORY_COLORS, OTHER_COLOR } from '../lib/reportPalette';
+import { formatMoney } from '../lib/reportCost';
 
 /** Deep clone, so a test that mutates the fixture cannot leak into the next. */
 const clone   = r => JSON.parse(JSON.stringify(r));
@@ -359,5 +360,90 @@ describe('date ranges', () => {
   it('still reads hour by hour for a single day', () => {
     render(<ReportSheets report={fixture()} />);
     expect(screen.getAllByText('Hour by hour').length).toBe(2);
+  });
+});
+
+/* ── gemini cost ───────────────────────────────────────────────────────── */
+
+describe('gemini cost', () => {
+  it('prints the window total on the overview sheet', () => {
+    const report = fixture();
+    const { container } = render(<ReportSheets report={report} />);
+    const page1 = container.querySelectorAll('.report-sheet')[0];
+
+    expect(within(page1).getByText('Gemini analysis cost')).toBeInTheDocument();
+    expect(report.cost.total.usd).toBeGreaterThan(0);
+    // Asserted through the formatter rather than a hardcoded shape, so this
+    // test checks that the total is rendered, not how many decimals it takes.
+    const shown = formatMoney(report.cost.total.usd, { code: report.cost.currency, perUsd: report.cost.perUsd });
+    expect(within(page1).getByText(shown)).toBeInTheDocument();
+  });
+
+  it('splits the total between calls and mail when both are in scope', () => {
+    const { container } = render(<ReportSheets report={fixture()} />);
+    const page1 = container.querySelectorAll('.report-sheet')[0];
+
+    expect(within(page1).getByText('Calls')).toBeInTheDocument();
+    expect(within(page1).getByText('Mails')).toBeInTheDocument();
+  });
+
+  it('drops the split on a single-channel report, where it would say nothing', () => {
+    const { container } = render(<ReportSheets report={clone(callsReport)} />);
+    const page1 = container.querySelectorAll('.report-sheet')[0];
+
+    expect(within(page1).getByText('Gemini analysis cost')).toBeInTheDocument();
+    expect(within(page1).queryByText('Mails')).not.toBeInTheDocument();
+  });
+
+  it('states how many analyses could not be priced', () => {
+    const report = fixture();
+    expect(report.cost.total.unpriced).toBeGreaterThan(0);   // the fixture must exercise this
+
+    render(<ReportSheets report={report} />);
+    expect(screen.getByText(new RegExp(`${report.cost.total.unpriced} analyses could not be`, 'i')))
+      .toBeInTheDocument();
+  });
+
+  it('says nothing about unpriced analyses when everything was priced', () => {
+    const report = fixture();
+    report.cost.total.unpriced = 0;
+    render(<ReportSheets report={report} />);
+    expect(screen.queryByText(/could not be\s*priced/i)).not.toBeInTheDocument();
+  });
+
+  it('prints the rate card, so a stale rate is visible on the page', () => {
+    render(<ReportSheets report={fixture()} />);
+    expect(screen.getByText(/Rates \(USD per 1M tokens\)/)).toBeInTheDocument();
+    expect(screen.getByText(/2\.5-flash 0\.3\/1a\/2\.5o/)).toBeInTheDocument();
+  });
+
+  it('gives every timeline bucket its own cost column', () => {
+    const report = fixture();
+    const { container } = render(<ReportSheets report={report} />);
+    const page2 = container.querySelectorAll('.report-sheet')[1];
+
+    expect(within(page2).getByText('AI cost')).toBeInTheDocument();
+    // The per-bucket costs must sum to the channel total.
+    const summed = report.timeline.calls.current.reduce((a, b) => a + b.costUsd, 0);
+    expect(summed).toBeCloseTo(report.cost.calls.usd, 4);
+  });
+
+  it('carries per-day cost on a range report', () => {
+    const report = clone(rangeReport);
+    const { container } = render(<ReportSheets report={report} />);
+    const page2 = container.querySelectorAll('.report-sheet')[1];
+
+    expect(within(page2).getByText('AI cost')).toBeInTheDocument();
+    expect(report.timeline.calls.current.every(b => typeof b.costUsd === 'number')).toBe(true);
+    const summed = report.timeline.calls.current.reduce((a, b) => a + b.costUsd, 0);
+    expect(summed).toBeCloseTo(report.cost.calls.usd, 4);
+  });
+
+  it('renders without a cost block at all for an older report shape', () => {
+    const report = fixture();
+    delete report.cost;
+    const { container } = render(<ReportSheets report={report} />);
+    expect(container.querySelectorAll('.report-sheet')).toHaveLength(5);
+    expect(screen.queryByText('Gemini analysis cost')).not.toBeInTheDocument();
   });
 });

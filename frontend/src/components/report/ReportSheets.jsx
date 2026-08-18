@@ -4,8 +4,10 @@ import IssueList from './IssueList';
 import IssuePie from './IssuePie';
 import Timeline from './Timeline';
 import FeedbackBars from './FeedbackBars';
+import CostSummary from './CostSummary';
 import { buildCategoryColors, BORDER_COLOR } from '../../lib/reportPalette';
 import { ddmmyyyy } from '../../lib/reportDate';
+import { formatMoney } from '../../lib/reportCost';
 
 /**
  * The printed sheets, given a report.
@@ -44,7 +46,7 @@ function Caveat({ children }) {
 }
 
 /** The bucket-by-bucket figures behind the line, so the page carries values. */
-function BucketTable({ buckets, colorOf, unit }) {
+function BucketTable({ buckets, colorOf, unit, currency }) {
   const active = buckets.filter(b => b.count > 0);
   if (active.length === 0) return <p className="text-[10px] text-slate-400 italic">No traffic in this window.</p>;
 
@@ -54,6 +56,7 @@ function BucketTable({ buckets, colorOf, unit }) {
         <tr className="text-slate-400 text-left uppercase tracking-wide">
           <th className="font-medium py-1 w-16">{unit}</th>
           <th className="font-medium py-1 w-14">Count</th>
+          <th className="font-medium py-1 w-20">AI cost</th>
           <th className="font-medium py-1">Dominant issue</th>
         </tr>
       </thead>
@@ -62,6 +65,12 @@ function BucketTable({ buckets, colorOf, unit }) {
           <tr key={b.key} className="border-t border-slate-100">
             <td className="py-0.5 tabular-nums text-slate-600">{b.label}</td>
             <td className="py-0.5 tabular-nums font-semibold text-slate-900">{b.count}</td>
+            <td className="py-0.5 tabular-nums text-slate-600">
+              {formatMoney(b.costUsd, currency)}
+              {b.unpriced > 0 && (
+                <span className="text-slate-400" title={`${b.unpriced} not priced`}> +{b.unpriced}?</span>
+              )}
+            </td>
             <td className="py-0.5">
               {b.topCategory ? (
                 <span className="flex items-center gap-1.5">
@@ -103,6 +112,7 @@ export default function ReportSheets({ report }) {
     : `Previous day ${ddmmyyyy(report.previousFrom)}`;
   const currentLabel = isRange ? `${report.days} days to ${ddmmyyyy(report.to)}` : `Today ${windowLabel}`;
   const unit = report.granularity === 'hour' ? 'Hour' : 'Day';
+  const currency = { code: report.cost?.currency ?? 'USD', perUsd: report.cost?.perUsd ?? 1 };
 
   // The sheets this report will actually emit, in order. Page numbers are read
   // off this list rather than counted during render, so a three-page report
@@ -245,6 +255,10 @@ export default function ReportSheets({ report }) {
           </h3>
           <IssuePie issueShare={report.issueShare} mentions={report.issueMentions} colorOf={colorOf} />
         </div>
+
+        <Rule />
+
+        <CostSummary cost={report.cost} channel={report.channel} />
       </Sheet>
 
       {/* ══ Call timeline ════════════════════════════════════════════════ */}
@@ -265,7 +279,7 @@ export default function ReportSheets({ report }) {
           <h3 className="text-[10px] uppercase tracking-wide text-slate-400 mb-2">
             {report.granularity === 'hour' ? 'Hour by hour' : 'Day by day'}
           </h3>
-          <BucketTable buckets={report.timeline.calls.current} colorOf={colorOf} unit={unit} />
+          <BucketTable buckets={report.timeline.calls.current} colorOf={colorOf} unit={unit} currency={currency} />
         </Sheet>
       )}
 
@@ -287,7 +301,7 @@ export default function ReportSheets({ report }) {
           <h3 className="text-[10px] uppercase tracking-wide text-slate-400 mb-2">
             {report.granularity === 'hour' ? 'Hour by hour' : 'Day by day'}
           </h3>
-          <BucketTable buckets={report.timeline.emails.current} colorOf={colorOf} unit={unit} />
+          <BucketTable buckets={report.timeline.emails.current} colorOf={colorOf} unit={unit} currency={currency} />
         </Sheet>
       )}
 

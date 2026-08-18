@@ -13,6 +13,7 @@ import {
   SERIES_TODAY, SERIES_PREVIOUS,
 } from '../lib/reportPalette';
 import { shiftDays } from '../lib/reportDate';
+import { formatMoney, formatTokens } from '../lib/reportCost';
 
 const share = names => names.map((category, i) => ({
   category, count: 100 - i, pct: 10,
@@ -135,5 +136,54 @@ describe('shiftDays', () => {
   it('produces the 7-day preset window the page uses', () => {
     // "Last 7 days" must span 7 days inclusive, not 8.
     expect(shiftDays('2026-08-18', -(7 - 1))).toBe('2026-08-12');
+  });
+});
+
+/* ── money formatting ──────────────────────────────────────────────────── */
+
+describe('formatMoney', () => {
+  const usd = { code: 'USD', perUsd: 1 };
+
+  it('shows two decimals for amounts of a dollar or more', () => {
+    expect(formatMoney(1.2345, usd)).toBe('$1.23');
+  });
+
+  it('keeps sub-cent spend visible instead of rounding it to $0.00', () => {
+    // The failure this guards: a real day's spend printed as free.
+    expect(formatMoney(0.0031, usd)).toBe('$0.0031');
+    expect(formatMoney(0.0031, usd)).not.toBe('$0.00');
+  });
+
+  it('scales precision to the magnitude', () => {
+    expect(formatMoney(0.25, usd)).toBe('$0.250');
+  });
+
+  it('shows an actual zero as zero', () => {
+    expect(formatMoney(0, usd)).toBe('$0');
+  });
+
+  it('shows an unknown cost as a dash, never as zero', () => {
+    expect(formatMoney(null, usd)).toBe('—');
+    expect(formatMoney(undefined, usd)).toBe('—');
+  });
+
+  it('converts and re-symbols when a display currency is configured', () => {
+    expect(formatMoney(1, { code: 'INR', perUsd: 83.5 })).toBe('₹83.50');
+  });
+
+  it('falls back to the code for a currency with no symbol', () => {
+    expect(formatMoney(2, { code: 'AED', perUsd: 3.67 })).toBe('AED 7.34');
+  });
+});
+
+describe('formatTokens', () => {
+  it('abbreviates thousands and millions', () => {
+    expect(formatTokens(1500)).toBe('1.5k');
+    expect(formatTokens(2_400_000)).toBe('2.4M');
+  });
+
+  it('leaves small counts alone', () => {
+    expect(formatTokens(842)).toBe('842');
+    expect(formatTokens(0)).toBe('0');
   });
 });
