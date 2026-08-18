@@ -73,6 +73,17 @@ const NAV = [
     ),
   },
   {
+    id: 'reports',
+    label: 'Daily Report',
+    roles: ['admin'],
+    icon: (
+      <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 2.5h7l3.5 3.5v11a1 1 0 01-1 1H5a1 1 0 01-1-1v-13a1 1 0 011-1z"/>
+        <path d="M12 2.5V6h3.5M7 11v3M10 9.5V14M13 12.5V14"/>
+      </svg>
+    ),
+  },
+  {
     id: 'stations',
     label: 'Stations',
     roles: ['admin'],

@@ -18,6 +18,23 @@
  */
 
 /**
+ * Every tag on one document, falling back to the legacy scalar pair.
+ *
+ * The in-memory twin of unwindTagsStage(), for the report aggregations that
+ * read a day of documents and group them in JS rather than in the pipeline.
+ * Mirrors tagsOf() in frontend/src/components/TagChips.jsx — the two must
+ * agree, or a report and the screen it summarises will disagree.
+ *
+ * @param {object} item a calls / emails / call_analysis document
+ * @returns {Array<{category: string, sub_category: string}>} possibly empty
+ */
+function tagsOf(item) {
+  if (Array.isArray(item?.tags) && item.tags.length > 0) return item.tags;
+  if (item?.category) return [{ category: item.category, sub_category: item.sub_category ?? '' }];
+  return [];
+}
+
+/**
  * Filter matching items carrying this category on ANY tag.
  *
  * Pass a sub-category too and both must sit on the SAME tag: an email tagged
@@ -65,4 +82,4 @@ function unwindTagsStage() {
   ];
 }
 
-module.exports = { tagMatch, unwindTagsStage };
+module.exports = { tagsOf, tagMatch, unwindTagsStage };

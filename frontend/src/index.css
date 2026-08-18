@@ -125,3 +125,52 @@ input[type="date"]::-webkit-inner-spin-button {
 .animate-export-shimmer {
   animation: export-shimmer 1.6s ease-in-out infinite;
 }
+
+/* ── Daily report sheets ──────────────────────────────────────────────────
+   A report sheet is paper: white ground, dark ink, in either portal theme.
+   Only what physically prints is pinned — the surrounding chrome still
+   follows the user's theme. */
+.report-sheet,
+.report-sheet * {
+  color-scheme: light;
+}
+
+.report-sheet {
+  break-inside: avoid;
+}
+
+/* Each sheet claims its own printed page; the last must not emit a blank one. */
+.report-pages > .report-sheet {
+  break-after: page;
+  page-break-after: always;
+}
+
+.report-pages > .report-sheet:last-child {
+  break-after: auto;
+  page-break-after: auto;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* The portal shell — sidebar, top bar, scroll containers — must not
+     constrain or paginate the sheets. */
+  body * {
+    overflow: visible !important;
+  }
+
+  .report-sheet {
+    width: 100% !important;
+    min-height: auto !important;
+    box-shadow: none !important;
+    margin: 0 !important;
+  }
+}

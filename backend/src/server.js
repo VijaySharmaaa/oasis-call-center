@@ -14,6 +14,7 @@ const authRouter     = require('./routes/auth');
 const ticketsRouter  = require('./routes/tickets');
 const stationsRouter = require('./routes/stations');
 const emailsRouter   = require('./routes/emails');
+const reportsRouter  = require('./routes/reports');
 const { requireAuth } = require('./middleware/auth');
 const { startWorker } = require('./workers/analysisWorker');
 const { startBugCategoryWorker } = require('./workers/bugCategoryWorker');
@@ -81,6 +82,7 @@ app.use('/api/agents',        apiLimiter,  agentsRouter);
 app.use('/api/tickets',       apiLimiter,  ticketsRouter);
 app.use('/api/stations',      apiLimiter,  stationsRouter);
 app.use('/api/emails',        apiLimiter,  emailsRouter);
+app.use('/api/reports',       apiLimiter,  reportsRouter);
 app.use('/webhook/recording',             webhookRouter);
 
 // ── Health check ──────────────────────────────────────────────────────────────
