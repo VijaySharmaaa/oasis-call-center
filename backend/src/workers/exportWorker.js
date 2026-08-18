@@ -162,6 +162,7 @@ function buildCallsPipeline(filter) {
               _id: 0,
               call_category: 1,
               call_sub_category: 1,
+              tags: 1,
               ai_insight: 1,
               summary: 1,
               bug_category: 1,
@@ -219,6 +220,17 @@ function normalizeMultiline(raw) {
   return String(raw).replace(/\r\n?/g, '\n').replace(/\n/g, '\r\n');
 }
 
+/**
+ * Flatten the tag array into one cell: "Category / Sub-Category; Category / Sub".
+ * Empty for sentinel records, which carry no tags by design.
+ */
+function formatTags(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return '';
+  return tags
+    .map(t => (t.sub_category && t.sub_category !== '-' ? `${t.category} / ${t.sub_category}` : t.category))
+    .join('; ');
+}
+
 function callsToCsvRecord(doc) {
   const a = doc.analysis || {};
   return {
@@ -239,6 +251,9 @@ function callsToCsvRecord(doc) {
     // Old records (analyzed before v3.4) only have ai_insight — fall back so
     // historical exports remain populated until those records are re-analyzed.
     'Sub-Category': a.call_sub_category && a.call_sub_category !== '-' ? a.call_sub_category : (a.ai_insight || ''),
+    // Every issue the call raised, not just the primary one. Semicolon-separated
+    // so a spreadsheet keeps it in one cell but a human can still read it.
+    'Tags': formatTags(a.tags),
     'AI Insight': a.ai_insight || '',
     'Summary': normalizeMultiline(a.summary),
     'Bug Category': a.bug_category || '',
@@ -311,6 +326,7 @@ function buildAnalysisPipeline(filter, user) {
       call_id: 1,
       category: 1,
       sub_category: 1,
+      tags: 1,
       ai_insight: 1,
       call_category: 1,
       bug_category: 1,
@@ -341,6 +357,7 @@ function analysisToCsvRecord(doc) {
     'AI Insight':      doc.ai_insight || '',
     'Gemini Category': doc.category || '',
     'Gemini Sub-Cat':  doc.sub_category || '',
+    'Tags':            formatTags(doc.tags),
     'Summary':         normalizeMultiline(doc.summary),
     'Bug Category':    doc.bug_category || '',
     'Bug Description': doc.bugs || '',
@@ -376,7 +393,7 @@ const EXPORT_TYPES = {
       'Call ID', 'Caller Number', 'Called Number', 'Agent Name', 'Agent Number', 'Status',
       'Keypress',
       'Call Start Time', 'Answer Time', 'Call End Time', 'Duration (s)', 'Agent Duration (s)',
-      'Call Category', 'Sub-Category', 'AI Insight', 'Summary', 'Bug Category', 'Bug Description',
+      'Call Category', 'Sub-Category', 'Tags', 'AI Insight', 'Summary', 'Bug Category', 'Bug Description',
       'Call Resolved', 'Agent Score', 'Audio Rating', 'Language', 'Recording URL',
       'Transcription', 'Created At',
     ],
@@ -389,6 +406,7 @@ const EXPORT_TYPES = {
     collection: 'call_analysis',
     headers: [
       'Call ID', 'Call Category', 'Sub-Category', 'AI Insight', 'Gemini Category', 'Gemini Sub-Cat',
+      'Tags',
       'Summary', 'Bug Category', 'Bug Description', 'Call Resolved', 'Agent Score',
       'Audio Rating', 'Audio Issues', 'Language', 'Caller', 'Agent Number',
       'Duration (s)', 'Recording', 'Date', 'Transcription',

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { fmtDate } from './TicketDetailModal';
 import EmailTicketModal from './EmailTicketModal';
+import { tagsOf, tagKey } from './TagChips';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -58,13 +59,29 @@ function AnalysisPanel({ analysis, onReanalyse, canReanalyse, busy }) {
 
       {status === 'completed' && (
         <div className="space-y-3">
+          {/* Every issue the email raised. A candidate who asks about Aadhaar OTP
+              *and* a photo upload gets both, rather than only the one they
+              happened to lead with. */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">
-              {analysis.category || 'Uncategorised'}
-            </span>
-            {analysis.sub_category && (
-              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300">
-                {analysis.sub_category}
+            {tagsOf(analysis).length > 0 ? (
+              tagsOf(analysis).map((tag, i) => (
+                <span
+                  key={tagKey(tag, i)}
+                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                    i === 0
+                      ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400'
+                      : 'bg-indigo-50/60 dark:bg-indigo-950/20 text-indigo-500 dark:text-indigo-400/80'
+                  }`}
+                >
+                  {tag.category}
+                  {tag.sub_category && tag.sub_category !== '-' && (
+                    <span className="opacity-70"> · {tag.sub_category}</span>
+                  )}
+                </span>
+              ))
+            ) : (
+              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">
+                {analysis.category || 'Uncategorised'}
               </span>
             )}
             {analysis.requested_action && analysis.requested_action !== 'Other' && (
@@ -109,7 +126,7 @@ function Field({ label, children }) {
   );
 }
 
-export default function EmailDetailModal({ emailId, onClose }) {
+export default function EmailDetailModal({ emailId, onClose, onMarkedUnread }) {
   const { token, isAdmin } = useAuth();
   const [email,   setEmail]   = useState(null);
   const [loading, setLoading] = useState(true);
@@ -120,6 +137,27 @@ export default function EmailDetailModal({ emailId, onClose }) {
   const [busyAttachment, setBusyAttachment] = useState(null);
   const [queueing, setQueueing] = useState(false);
   const [showTickets, setShowTickets] = useState(false);
+  const [markingUnread, setMarkingUnread] = useState(false);
+
+  /* Put it back in the unread pile — the inverse of the mark-read the list
+     fires on open, and the recovery for a mail opened by mistake. Gmail is not
+     told either way; the service account is read-only. */
+  async function markUnread() {
+    setMarkingUnread(true);
+    try {
+      const res = await fetch(`${API}/api/emails/${emailId}/read`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body:    JSON.stringify({ read: false }),
+      });
+      if (!res.ok) throw new Error('Could not mark unread');
+      onMarkedUnread?.(emailId);
+      onClose();
+    } catch (err) {
+      setError(err.message);
+      setMarkingUnread(false);
+    }
+  }
 
   const load = useCallback(async () => {
     const res = await fetch(`${API}/api/emails/${emailId}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -232,7 +270,16 @@ export default function EmailDetailModal({ emailId, onClose }) {
                 <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 break-all">
                   to {email?.to || '—'}{email?.cc ? ` · cc ${email.cc}` : ''}
                 </p>
-                <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">{fmtDate(email?.received_at)}</p>
+                <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5">
+                  {fmtDate(email?.received_at)}
+                  {/* Shared mailbox — knowing someone already picked this up is
+                      the difference between one reply and three. */}
+                  {email?.read_at && (
+                    <span className="text-slate-400 dark:text-zinc-500">
+                      {' · opened'}{email.read_by ? ` by ${email.read_by}` : ''}
+                    </span>
+                  )}
+                </p>
                 {userLabels.length > 0 && (
                   <div className="flex items-center gap-1.5 mt-2 flex-wrap">
                     {userLabels.map(l => (
@@ -246,6 +293,15 @@ export default function EmailDetailModal({ emailId, onClose }) {
             )}
           </div>
           <div className="shrink-0 ml-4 flex items-center gap-1.5">
+            <button
+              onClick={markUnread}
+              disabled={markingUnread || loading}
+              title="Put this back in the unread pile (does not change Gmail)"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-40"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+              {markingUnread ? 'Marking…' : 'Unread'}
+            </button>
             <button
               onClick={() => setShowTickets(true)}
               disabled={!email?.from_email}

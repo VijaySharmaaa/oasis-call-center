@@ -967,10 +967,19 @@ TASKS:
    - If the conversation is in Hindi, English, or a mix of both, transcribe in Hinglish (Hindi words written in Roman/Latin script mixed with English). Do NOT use Devanagari script.
    - Example: "CANDIDATE: Mera registration number nahi mil raha hai, kya aap help kar sakte hain?"
 
-2) Categorization:
+2) Tagging:
    - Determine if the audio is clear enough to identify the candidate's issue.
    - If NOT (too noisy, silent, unintelligible): apply the Audio Unclear special case above — stop here for all other fields.
-   - If YES: choose exactly ONE category and ONE sub_category from the schema. category MUST be a top-level key; sub_category MUST be a listed value under it. Do not invent or paraphrase.
+   - If YES: return one TAG PER DISTINCT ISSUE the candidate raises, in "tags".
+     A tag is { "category": "<top-level key>", "sub_category": "<value listed under it>" }.
+     Both names MUST come from the schema, verbatim — do not invent or paraphrase.
+   - Callers often raise two or three problems in one call. Tag EVERY one of them;
+     an issue with no tag is an issue nobody will ever count.
+   - One issue = one tag. Do NOT emit a second tag for the same issue worded
+     differently, and do NOT tag something mentioned in passing without a question.
+   - Most calls need exactly one tag. Never return more than ${MAX_TAGS}.
+   - Order by importance: tags[0] is the PRIMARY issue — the one the candidate
+     leads with or presses hardest. "category" and "sub_category" MUST repeat it.
 
 3) Summary (only if audio is clear):
    - Sentence 1: what issue did the candidate raise?
@@ -1034,6 +1043,7 @@ OUTPUT FORMAT (must match exactly):
   "audio_quality": { "rating": "", "issues": "" },
   "transcription": "",
   "language": [],
+  "tags": [{ "category": "", "sub_category": "" }],
   "error": null
 }
 `;
@@ -1180,12 +1190,22 @@ OUTPUT FORMAT (must match exactly):
       analysis.call_category     = validCategory;
       analysis.call_sub_category = validSubCategory;
 
-      logger.info('Gemini analysis complete', { totalSec: ((Date.now() - startTime) / 1000).toFixed(1), analysisSec: ((Date.now() - genStart) / 1000).toFixed(1), model: modelUsed, fallback: usedFallback });
+      // Tags carry every issue the caller raised; the scalar pair above is
+      // tags[0], kept so that filters, exports and dashboards written against a
+      // single category keep working unchanged. A response with no usable tags
+      // still yields one, so nothing downstream ever sees an empty list.
+      const tags = snapTags(analysis.tags, { taxonomy: callCategories, dynamic: useDynamicCategories });
+      if (tags.length === 0) {
+        tags.push(snapToTaxonomy(analysis.category, analysis.sub_category, { taxonomy: callCategories, dynamic: useDynamicCategories }));
+      }
+
+      logger.info('Gemini analysis complete', { totalSec: ((Date.now() - startTime) / 1000).toFixed(1), analysisSec: ((Date.now() - genStart) / 1000).toFixed(1), model: modelUsed, fallback: usedFallback, tags: tags.length });
 
       return {
         success:           true,
         category:          cleanCategory(analysis.category)      || 'Uncategorized',
         sub_category:      cleanCategory(analysis.sub_category)  || 'N/A',
+        tags,
         summary:           analysis.summary       || '',
         ai_insight:        analysis.ai_insight    || '',
         bugs:              analysis.bugs          || '-',
@@ -1346,6 +1366,51 @@ function snapToTaxonomy(category, subCategory, { taxonomy, dynamic }) {
 }
 
 /**
+ * A candidate rarely raises exactly one issue, but five is already generous —
+ * beyond that the model has stopped reading and started enumerating the schema.
+ */
+const MAX_TAGS = 5;
+
+/**
+ * Snap a list of model-proposed tags onto the taxonomy in force.
+ *
+ * A tag is a (category, sub_category) pair drawn from the SAME vocabulary a
+ * lone category always came from: tagging changed how many an item may carry,
+ * not what they may say. Every pair therefore goes through snapToTaxonomy, so
+ * an invented name still cannot reach the database.
+ *
+ * Duplicates collapse and order is preserved, because the first tag is the
+ * primary issue and the scalar category/sub_category mirror it.
+ *
+ * @returns {Array<{category: string, sub_category: string}>} possibly empty
+ */
+function snapTags(rawTags, { taxonomy, dynamic } = {}) {
+  const out  = [];
+  const seen = new Set();
+
+  for (const raw of Array.isArray(rawTags) ? rawTags : []) {
+    if (!raw) continue;
+    // A model that ignores the object shape and returns bare category names is
+    // still saying something useful; treat the string as a parent-only tag.
+    const pair = typeof raw === 'string'
+      ? { category: raw, sub_category: '-' }
+      : { category: raw.category, sub_category: raw.sub_category };
+
+    const snapped = snapToTaxonomy(pair.category, pair.sub_category, { taxonomy, dynamic });
+    const key = `${snapped.category} :: ${snapped.sub_category}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(snapped);
+    if (out.length >= MAX_TAGS) break;
+  }
+
+  // Uncategorised is a sentinel meaning "nothing fit". Once a real tag exists
+  // it carries no information, so it survives only as the sole tag.
+  const real = out.filter(t => t.category !== 'Uncategorised');
+  return real.length ? real : out.slice(0, 1);
+}
+
+/**
  * POST a text-only prompt to Gemini and return parsed JSON, applying the same
  * global rate-limit gate and 429 → fallback-model behaviour the audio path uses.
  * @returns {Promise<{ok: true, json: object, model: string, usedFallback: boolean}
@@ -1492,17 +1557,24 @@ misspelled, in Hindi, or written in Hinglish. A one-line request like
 "payment ho gaya form nahi bhara" IS classifiable.
 
 TASKS:
-1) Categorization:
-   - Choose exactly ONE category and ONE sub_category from the schema below.
-   - category MUST be a top-level key; sub_category MUST be a listed value under it.
-   - Do not invent or paraphrase schema names.
+1) Tagging:
+   - Return one TAG PER DISTINCT ISSUE the candidate raises, in "tags".
+   - A tag is { "category": "<top-level key>", "sub_category": "<value listed under it>" }.
+   - Both names MUST come from the schema below, verbatim. Do not invent or
+     paraphrase schema names.
    - Many of these emails mix English, Devanagari Hindi and Hinglish, often in one
-     sentence. Read all three; the language never changes the categorization.
+     sentence. Read all three; the language never changes the tagging.
 
-2) Multiple issues in one email:
-   - Candidates often raise two or three problems at once. Categorize the PRIMARY
-     issue — the one they lead with or ask for most explicitly — and mention the
-     secondary ones in the summary.
+2) How many tags:
+   - Candidates often raise two or three problems at once. Tag EVERY one of them —
+     an issue with no tag is an issue support will never see.
+   - One issue = one tag. Do NOT emit a second tag for the same issue worded
+     differently, and do NOT tag something the candidate merely mentions in
+     passing without asking about.
+   - Most emails need exactly one tag. Never return more than ${MAX_TAGS}.
+   - Order tags by importance: tags[0] is the PRIMARY issue — the one they lead
+     with or ask for most explicitly.
+   - "category" and "sub_category" at the top level MUST repeat tags[0] exactly.
 
 3) Summary:
    - Sentence 1: what is the candidate's problem?
@@ -1563,6 +1635,7 @@ OUTPUT FORMAT (must match exactly):
   "bug_category": "",
   "requested_action": "",
   "language": [],
+  "tags": [{ "category": "", "sub_category": "" }],
   "error": null
 }
 `;
@@ -1619,13 +1692,26 @@ OUTPUT FORMAT (must match exactly):
 
     // The schema pair itself is validated too, so an invented name from task 1
     // cannot reach the database.
-    const primary = isUnclear
+    const scalarPair = isUnclear
       ? { category: 'Content Unclear', sub_category: '' }
       : snapToTaxonomy(analysis.category, analysis.sub_category, { taxonomy: null, dynamic: false });
+
+    // Tags are the real verdict; the scalar pair is tags[0] kept for every
+    // filter, export and dashboard that predates tagging. A model that ignores
+    // the tags key still yields one tag, so nothing downstream sees an empty
+    // list. Content Unclear means "no identifiable request" — it is a state,
+    // not an issue, so it is deliberately left untagged.
+    const tags = isUnclear
+      ? []
+      : snapTags(analysis.tags, { taxonomy: null, dynamic: false });
+    if (!isUnclear && tags.length === 0) tags.push(scalarPair);
+
+    const primary = tags[0] || scalarPair;
 
     logger.info('[EmailAI] Analysis complete', {
       gmail_id: email.gmail_id,
       category: primary.category,
+      tags: tags.length,
       totalSec: ((Date.now() - startTime) / 1000).toFixed(1),
       model: result.model,
       fallback: result.usedFallback,
@@ -1635,6 +1721,7 @@ OUTPUT FORMAT (must match exactly):
       success:            true,
       category:           primary.category,
       sub_category:       primary.sub_category,
+      tags,
       summary:            analysis.summary || '',
       ai_insight:         isUnclear ? '-' : (analysis.ai_insight || ''),
       bugs:               analysis.bugs || '-',
@@ -1659,6 +1746,8 @@ module.exports = {
   htmlToText,
   stripQuotedText,
   snapToTaxonomy,
+  snapTags,
+  MAX_TAGS,
   CATEGORIZATION_SCHEMA,
   detectTranscriptionLoop,
   generateCategoryTaxonomy,

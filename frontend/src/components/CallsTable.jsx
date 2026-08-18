@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import AudioPlayer from './AudioPlayer';
 import TranscriptionModal from './TranscriptionModal';
+import TagChips from './TagChips';
 import { initiateCall, pollClick2Call } from '../hooks/useCalls';
 
 const SYSTEM_NUMBER = '8037126236';
@@ -317,7 +318,7 @@ export default function CallsTable({ calls, hasFilters = false, isAgent = false,
               <div className="grid grid-cols-2 gap-2 text-xs mb-3">
                 <div>
                   <p className="text-slate-400 dark:text-zinc-500">Category</p>
-                  <p className="text-slate-700 dark:text-zinc-300">{call.category || '—'}</p>
+                  <TagChips item={call} max={3} className="mt-0.5" />
                 </div>
                 <div>
                   <p className="text-slate-400 dark:text-zinc-500">Sub-Category</p>
@@ -444,7 +445,7 @@ export default function CallsTable({ calls, hasFilters = false, isAgent = false,
                       <DialBtn call={call} />
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-slate-600 dark:text-zinc-300 text-xs whitespace-nowrap">{call.category || '—'}</td>
+                  <td className="px-3 py-2 text-xs max-w-[220px]"><TagChips item={call} max={2} /></td>
                   <td className="px-3 py-2 text-slate-600 dark:text-zinc-300 text-xs whitespace-nowrap">{call.sub_category || '—'}</td>
                   <td className="px-3 py-2 min-w-[200px]">
                     {call.call_recording && call.agent_answer_time ? (

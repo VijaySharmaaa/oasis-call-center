@@ -195,12 +195,14 @@ async function processRecord(db, record) {
       await writeBack(db, ownedFilter, gmail_id, {
         status: 'completed', category: TOO_SHORT_CATEGORY, sub_category: '',
         email_category: TOO_SHORT_CATEGORY, email_sub_category: '',
+        // A sentinel is a state, not an issue, so it earns no tag.
+        tags: [],
         summary: '', ai_insight: '-', bugs: '-', bug_category: '-',
         requested_action: 'Other', language: [], body_chars: bodyChars,
         error: null, last_error: null, next_attempt_at: null, processing_id: null,
         processed_at: now, updated_at: now,
       }, {
-        category: TOO_SHORT_CATEGORY, sub_category: '', ai_insight: '-', analysed_at: now,
+        category: TOO_SHORT_CATEGORY, sub_category: '', tags: [], ai_insight: '-', analysed_at: now,
       });
       logger.info('[EmailAI] Skipped (no usable body)', { gmail_id, bodyChars });
       return;
@@ -226,6 +228,7 @@ async function processRecord(db, record) {
         status:             'completed',
         category:           result.category,
         sub_category:       result.sub_category,
+        tags:               result.tags || [],
         summary:            result.summary,
         ai_insight:         result.ai_insight,
         bugs:               result.bugs,
@@ -244,12 +247,15 @@ async function processRecord(db, record) {
         processed_at:       now,
         updated_at:         now,
       }, {
+        // Mirrored onto the email document so list filtering needs no join —
+        // the same reason the scalar pair is mirrored.
         category:     result.category,
         sub_category: result.sub_category,
+        tags:         result.tags || [],
         ai_insight:   result.ai_insight,
         analysed_at:  now,
       });
-      if (ok) logger.info('[EmailAI] Done', { gmail_id, category: result.category });
+      if (ok) logger.info('[EmailAI] Done', { gmail_id, category: result.category, tags: (result.tags || []).length });
       return;
     }
 

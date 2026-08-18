@@ -9,12 +9,43 @@
  * behind the code and the test is no longer proving what it claims.
  */
 
+/**
+ * Read a dotted path, spreading across arrays the way Mongo does: on
+ * { tags: [{ category: 'A' }, { category: 'B' }] } the path 'tags.category'
+ * yields ['A', 'B'], which the scalar comparison below then matches by
+ * membership. Without this, tag filters would silently match nothing.
+ */
+function resolvePath(doc, path) {
+  if (!path.includes('.')) return doc?.[path];
+
+  let current = [doc];
+  for (const segment of path.split('.')) {
+    const next = [];
+    for (const node of current) {
+      if (node === null || node === undefined) continue;
+      const value = Array.isArray(node)
+        ? node.map(item => item?.[segment])
+        : [node[segment]];
+      for (const v of value) {
+        if (Array.isArray(v)) next.push(...v);
+        else if (v !== undefined) next.push(v);
+      }
+    }
+    current = next;
+  }
+
+  // A single hit reads as a scalar so that $regex, $gt and friends still see
+  // the value rather than a one-element array.
+  if (current.length === 0) return undefined;
+  return current.length === 1 ? current[0] : current;
+}
+
 function matches(doc, filter) {
   return Object.entries(filter).every(([key, cond]) => {
     if (key === '$and') return cond.every(c => matches(doc, c));
     if (key === '$or')  return cond.some(c => matches(doc, c));
 
-    const value = doc[key];
+    const value = resolvePath(doc, key);
 
     if (cond && typeof cond === 'object' && !(cond instanceof Date) && !Array.isArray(cond)) {
       return Object.entries(cond).every(([op, arg]) => {
@@ -29,6 +60,10 @@ function matches(doc, filter) {
           case '$nin':     return !arg.includes(value);
           case '$size':    return Array.isArray(value) && value.length === arg;
           case '$exists':  return (value !== undefined) === arg;
+          // Every condition must hold on the SAME array element — the reason
+          // tag filters use it instead of two dotted conditions.
+          case '$elemMatch':
+            return Array.isArray(value) && value.some(item => matches(item, arg));
           // Only the BSON aliases the code actually asks for. Mongo's numeric
           // type codes and the array/object cases are deliberately absent —
           // adding them untested would be guessing at semantics.
@@ -63,6 +98,11 @@ function applyUpdate(doc, update, { isInsert = false } = {}) {
         break;
       case '$setOnInsert':
         if (isInsert) Object.assign(out, spec);
+        break;
+      // Removes the key outright — the distinction from setting null matters to
+      // any filter written as { field: { $exists: false } }.
+      case '$unset':
+        for (const key of Object.keys(spec)) delete out[key];
         break;
       case '$inc':
         for (const [k, v] of Object.entries(spec)) out[k] = (out[k] || 0) + v;
@@ -121,7 +161,9 @@ function bsonCompare(a, b) {
 }
 
 function evalExpr(expr, doc) {
-  if (typeof expr === 'string' && expr.startsWith('$')) return doc[expr.slice(1)];
+  // Field paths may be dotted ('$_tag_list.category'), which is how the tag
+  // pipelines read a field off an unwound sub-document.
+  if (typeof expr === 'string' && expr.startsWith('$')) return resolvePath(doc, expr.slice(1));
   if (expr === null || typeof expr !== 'object') return expr;
   if (Array.isArray(expr)) return expr.map(e => evalExpr(e, doc));
 
@@ -151,6 +193,10 @@ function evalExpr(expr, doc) {
     case '$ifNull': {
       const value = evalExpr(arg[0], doc);
       return value === null || value === undefined ? evalExpr(arg[1], doc) : value;
+    }
+    case '$size': {
+      const value = evalExpr(arg, doc);
+      return Array.isArray(value) ? value.length : 0;
     }
     default: throw new Error(`fakeMongo: unsupported aggregation expression ${op}`);
   }
@@ -184,6 +230,20 @@ function runPipeline(docs, pipeline, store = {}) {
           return 0;
         });
         break;
+      case '$unwind': {
+        // Path form only ('$field'), which is all the tag pipelines use. An
+        // empty or missing array drops the document, matching Mongo's default
+        // (preserveNullAndEmptyArrays is not requested anywhere in src).
+        const field = (typeof spec === 'string' ? spec : spec.path).replace(/^\$/, '');
+        const out = [];
+        for (const row of rows) {
+          const value = row[field];
+          if (Array.isArray(value)) out.push(...value.map(item => ({ ...row, [field]: item })));
+          else if (value !== undefined && value !== null) out.push(row);
+        }
+        rows = out;
+        break;
+      }
       case '$skip':
         rows = rows.slice(spec);
         break;

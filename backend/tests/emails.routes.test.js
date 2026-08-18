@@ -97,6 +97,8 @@ beforeEach(() => {
 
 const ids = res => res.body.emails.map(e => e.id);
 const get = (path, token = adminToken) => request(app).get(path).set('Authorization', `Bearer ${token}`);
+const patch = (path, body, token = adminToken) =>
+  request(app).patch(path).set('Authorization', `Bearer ${token}`).send(body);
 
 describe('auth', () => {
   it('rejects a request with no token', async () => {
@@ -144,6 +146,78 @@ describe('GET /api/emails', () => {
   it('filters by unread=true and unread=false', async () => {
     expect(ids(await get('/api/emails?unread=true').expect(200))).toEqual(['m1']);
     expect(ids(await get('/api/emails?unread=false').expect(200))).toEqual(['m2']);
+  });
+});
+
+/**
+ * Oasis-side read state.
+ *
+ * The service account holds gmail.readonly, so opening a mail here cannot clear
+ * Gmail's UNREAD label. `read_at` records the read on our side instead, and
+ * "unread" means unread in Gmail AND not opened here — otherwise every mail an
+ * operator reads in Oasis stays bold forever, which is the bug this fixes.
+ */
+describe('PATCH /api/emails/:id/read', () => {
+  const readAtOf = id => mockFake.store.emails.get(id).read_at;
+
+  it('rejects an unauthenticated request', async () => {
+    await request(app).patch('/api/emails/m1/read').send({ read: true }).expect(401);
+  });
+
+  it('404s for a message we do not hold', async () => {
+    await patch('/api/emails/nope/read', { read: true }).expect(404);
+  });
+
+  it('marks a mail read and records who did it', async () => {
+    await patch('/api/emails/m1/read', { read: true }).expect(200);
+    expect(readAtOf('m1')).toBeInstanceOf(Date);
+    expect(mockFake.store.emails.get('m1').read_by).toBe('Admin');
+  });
+
+  it('defaults to marking read when the body omits the flag', async () => {
+    await patch('/api/emails/m1/read', {}).expect(200);
+    expect(readAtOf('m1')).toBeInstanceOf(Date);
+  });
+
+  it('drops the mail out of the unread filter and count once read', async () => {
+    expect(ids(await get('/api/emails?unread=true'))).toEqual(['m1']);
+    expect((await get('/api/emails')).body.unreadCount).toBe(1);
+
+    await patch('/api/emails/m1/read', { read: true }).expect(200);
+
+    expect(ids(await get('/api/emails?unread=true'))).toEqual([]);
+    expect((await get('/api/emails')).body.unreadCount).toBe(0);
+    // …and it now reads as read, even though Gmail still says UNREAD.
+    expect(ids(await get('/api/emails?unread=false')).sort()).toEqual(['m1', 'm2']);
+    expect(mockFake.store.emails.get('m1').is_unread).toBe(true);
+  });
+
+  it('puts it back in the unread pile when read=false', async () => {
+    await patch('/api/emails/m1/read', { read: true }).expect(200);
+    await patch('/api/emails/m1/read', { read: false }).expect(200);
+
+    // Unset, not nulled — the unread predicate is a plain $exists.
+    expect('read_at' in mockFake.store.emails.get('m1')).toBe(false);
+    expect(ids(await get('/api/emails?unread=true'))).toEqual(['m1']);
+  });
+
+  it('cannot resurrect a mail Gmail itself considers read', async () => {
+    // m2 is read in Gmail. Clearing our marker must not make it unread again.
+    await patch('/api/emails/m2/read', { read: false }).expect(200);
+    expect(ids(await get('/api/emails?unread=true'))).toEqual(['m1']);
+  });
+
+  it('lets any agent mark read — a shared mailbox is triaged by whoever picks it up', async () => {
+    await patch('/api/emails/m1/read', { read: true }, agentToken).expect(200);
+    expect(mockFake.store.emails.get('m1').read_by).toBe('Agent');
+  });
+
+  it('is idempotent', async () => {
+    await patch('/api/emails/m1/read', { read: true }).expect(200);
+    const first = readAtOf('m1');
+    await patch('/api/emails/m1/read', { read: true }).expect(200);
+    expect(readAtOf('m1')).toBeInstanceOf(Date);
+    expect(readAtOf('m1').getTime()).toBeGreaterThanOrEqual(first.getTime());
   });
 
   it('searches subject, sender and body', async () => {

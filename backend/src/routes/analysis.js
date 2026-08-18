@@ -7,6 +7,7 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { createExportJob, getExportJob } = require('../workers/exportWorker');
 const { detectTranscriptionLoop, generateCategoryTaxonomy, generaliseCategoryTaxonomy } = require('../services/geminiService');
 const { dynamicCategoriesEnabled } = require('../config/features');
+const { tagMatch } = require('../lib/tags');
 
 const router = express.Router();
 
@@ -823,12 +824,17 @@ router.get('/', async (req, res) => {
   if (bugsOnly) conditions.push({ bugs: { $exists: true, $nin: ['', '-'] } });
   if (bugCategory) conditions.push({ bug_category: bugCategory });
   if (callCategory) conditions.push({ call_category: callCategory });
-  if (category) conditions.push({ category });
+  // Matches the category on ANY tag, so a call whose second issue was Billing
+  // is found by a Billing filter. Sentinels are never tagged, so they keep
+  // matching through the scalar arm of tagMatch.
+  if (category) conditions.push(tagMatch(category));
   if (search)   conditions.push({ $or: [
-    { call_id:     { $regex: search, $options: 'i' } },
-    { category:    { $regex: search, $options: 'i' } },
-    { sub_category:{ $regex: search, $options: 'i' } },
-    { ai_insight:  { $regex: search, $options: 'i' } },
+    { call_id:          { $regex: search, $options: 'i' } },
+    { category:         { $regex: search, $options: 'i' } },
+    { sub_category:     { $regex: search, $options: 'i' } },
+    { 'tags.category':  { $regex: search, $options: 'i' } },
+    { 'tags.sub_category': { $regex: search, $options: 'i' } },
+    { ai_insight:       { $regex: search, $options: 'i' } },
   ]});
   if (dateFrom || dateTo) {
     const dc = {};

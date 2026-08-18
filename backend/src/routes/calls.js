@@ -6,6 +6,7 @@ const { ObjectId } = require('mongodb');
 const { getDb } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { createExportJob, getExportJob, streamCsv } = require('../workers/exportWorker');
+const { unwindTagsStage } = require('../lib/tags');
 const logger = require('../logger');
 
 const router = express.Router();
@@ -342,9 +343,12 @@ router.get('/stats/summary', async (req, res) => {
       { $group: { _id: '$agent_number', agent_name: { $first: '$agent_name' }, avgDuration: { $avg: '$duration' } } },
       { $sort: { avgDuration: -1 } },
     ]).toArray(),
+    // One row per (call, tag). A call raising two issues counts under both, so
+    // this breakdown sums above the call total — it counts issues, not calls.
     col.aggregate([
       { $match: andWith(agentFilter, { category: { $exists: true, $ne: '' } }) },
-      { $group: { _id: { category: '$category', sub_category: '$sub_category' }, count: { $sum: 1 } } },
+      ...unwindTagsStage(),
+      { $group: { _id: { category: '$_tag_list.category', sub_category: '$_tag_list.sub_category' }, count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]).toArray(),
     db.collection('call_analysis').aggregate([

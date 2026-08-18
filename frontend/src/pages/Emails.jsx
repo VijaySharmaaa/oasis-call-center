@@ -3,6 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { fmtDate } from '../components/TicketDetailModal';
 import EmailDetailModal from '../components/EmailDetailModal';
 import EmailTicketModal from '../components/EmailTicketModal';
+import TagChips from '../components/TagChips';
 import Pagination from '../components/Pagination';
 import ColorSelect from '../components/ColorSelect';
 
@@ -12,6 +13,15 @@ const READ_COLORS = {
   'true':  'text-indigo-600 dark:text-indigo-400',
   'false': 'text-slate-500 dark:text-zinc-400',
 };
+
+/**
+ * Unread means unread in Gmail AND not yet opened by anyone in Oasis.
+ * `read_at` is Oasis's own state — the sync worker never writes it, and Gmail
+ * is never told, because the service account is read-only.
+ */
+function isUnread(mail) {
+  return !!mail.is_unread && !mail.read_at;
+}
 
 /** Same affordance as the call report's row action, so it reads as one feature. */
 function TicketBtn({ onClick }) {
@@ -98,6 +108,24 @@ export default function Emails() {
     return () => clearInterval(interval);
   }, [load]);
 
+  /* Opening a mail marks it read here. The row updates immediately rather than
+     waiting for the next poll, and a failure is silent — a lost read marker is
+     not worth interrupting someone mid-triage. */
+  function openEmail(mail) {
+    setSelectedId(mail.id);
+    if (!isUnread(mail)) return;
+
+    const readAt = new Date().toISOString();
+    setEmails(list => list.map(m => (m.id === mail.id ? { ...m, read_at: readAt } : m)));
+    setUnreadCount(n => Math.max(0, n - 1));
+
+    fetch(`${API}/api/emails/${mail.id}/read`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body:    JSON.stringify({ read: true }),
+    }).catch(() => {});
+  }
+
   async function syncNow() {
     setSyncing(true);
     try {
@@ -111,7 +139,16 @@ export default function Emails() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
-      {selectedId && <EmailDetailModal emailId={selectedId} onClose={() => setSelectedId(null)} />}
+      {selectedId && (
+        <EmailDetailModal
+          emailId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onMarkedUnread={id => {
+            setEmails(list => list.map(m => (m.id === id ? { ...m, read_at: null } : m)));
+            setUnreadCount(n => n + 1);
+          }}
+        />
+      )}
       {ticketEmail && <EmailTicketModal email={ticketEmail} onClose={() => setTicketEmail(null)} />}
 
       {/* Header */}
@@ -278,18 +315,18 @@ export default function Emails() {
                 {emails.map(m => (
                   <tr
                     key={m.id}
-                    onClick={() => setSelectedId(m.id)}
+                    onClick={() => openEmail(m)}
                     className="border-t border-slate-100 dark:border-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-900/50 cursor-pointer transition-colors"
                   >
                     <td className="px-3 py-2.5 max-w-[200px]">
                       <div className="flex items-center gap-1.5">
-                        {m.is_unread && <span title="Unread" className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />}
-                        <span className={`truncate ${m.is_unread ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-600 dark:text-zinc-300'}`}>
+                        {isUnread(m) && <span title="Unread" className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />}
+                        <span className={`truncate ${isUnread(m) ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-600 dark:text-zinc-300'}`}>
                           {m.from_name || m.from_email || '—'}
                         </span>
                       </div>
                     </td>
-                    <td className={`px-3 py-2.5 max-w-[280px] truncate ${m.is_unread ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-700 dark:text-zinc-300'}`}>
+                    <td className={`px-3 py-2.5 max-w-[280px] truncate ${isUnread(m) ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-700 dark:text-zinc-300'}`}>
                       {m.subject}
                     </td>
                     {/* Falls back to the raw snippet until the worker gets to it. */}
@@ -298,10 +335,8 @@ export default function Emails() {
                         ? <span className="text-slate-600 dark:text-zinc-300">{m.ai_insight}</span>
                         : <span className="text-slate-400 dark:text-zinc-500 italic">{m.analysed_at ? '—' : m.snippet}</span>}
                     </td>
-                    <td className="px-3 py-2.5 max-w-[180px] truncate text-xs">
-                      {m.category
-                        ? <span className="text-slate-600 dark:text-zinc-300">{m.category}</span>
-                        : <span className="text-slate-300 dark:text-zinc-600">pending</span>}
+                    <td className="px-3 py-2.5 max-w-[220px] text-xs">
+                      <TagChips item={m} max={2} />
                     </td>
                     <td className="px-3 py-2.5 max-w-[200px] truncate text-slate-500 dark:text-zinc-400 text-xs">{m.sub_category || '—'}</td>
                     <td className="px-3 py-2.5">
@@ -326,11 +361,11 @@ export default function Emails() {
             {emails.map(m => (
               <div
                 key={m.id}
-                onClick={() => setSelectedId(m.id)}
+                onClick={() => openEmail(m)}
                 className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-4 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors"
               >
                 <div className="flex items-start justify-between gap-2 mb-1">
-                  <span className={`text-sm truncate ${m.is_unread ? 'font-bold text-slate-900 dark:text-zinc-100' : 'font-medium text-slate-600 dark:text-zinc-300'}`}>
+                  <span className={`text-sm truncate ${isUnread(m) ? 'font-bold text-slate-900 dark:text-zinc-100' : 'font-medium text-slate-600 dark:text-zinc-300'}`}>
                     {m.from_name || m.from_email || '—'}
                   </span>
                   <div className="shrink-0 flex items-center gap-1">
@@ -338,16 +373,11 @@ export default function Emails() {
                     <TicketBtn onClick={e => { e.stopPropagation(); setTicketEmail(m); }} />
                   </div>
                 </div>
-                <p className={`text-sm mb-1 ${m.is_unread ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-700 dark:text-zinc-300'}`}>{m.subject}</p>
+                <p className={`text-sm mb-1 ${isUnread(m) ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-700 dark:text-zinc-300'}`}>{m.subject}</p>
                 <p className="text-xs text-slate-400 dark:text-zinc-500 line-clamp-2">{m.snippet}</p>
                 {m.category && (
-                  <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400">
-                      {m.category}
-                    </span>
-                    {m.sub_category && (
-                      <span className="text-[10px] text-slate-400 dark:text-zinc-500">{m.sub_category}</span>
-                    )}
+                  <div className="mt-2">
+                    <TagChips item={m} max={3} showSub />
                   </div>
                 )}
               </div>

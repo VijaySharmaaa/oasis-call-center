@@ -109,6 +109,52 @@ The **disposition axis** from `email-taxonomy-fit.md` is *not* implemented. Auto
 
 Email HTML is untrusted third-party markup, so it is never injected into the app's DOM. The detail modal defaults to the plain-text part and renders HTML only inside `<iframe sandbox="" referrerPolicy="no-referrer">` — no scripts, forms, popups, or top-level navigation, and no access to the session token.
 
+## Read state
+
+Gmail's `UNREAD` label is mirrored to `is_unread` on every fetch, and label changes made *in Gmail* arrive as history deltas. What was missing is the other direction: reading a mail **in Oasis** left it bold forever, because the sync is read-only and `SCOPE` is hardcoded to `gmail.readonly`.
+
+Oasis therefore keeps its own marker:
+
+| Field | Owner | Meaning |
+|---|---|---|
+| `is_unread` | Gmail | the `UNREAD` label, rewritten on every re-fetch |
+| `read_at` / `read_by` | Oasis | who opened it here, and when |
+
+**Unread = `is_unread && !read_at`.** Both halves matter, and the pair lives in `UNREAD` / `IS_READ` in `routes/emails.js` so the list filter, the `unreadCount` and the sync-status count cannot disagree.
+
+`read_at` is deliberately a separate field rather than a flip of `is_unread`: `fetchAndStore` writes `$set: { ...doc }` on every re-fetch, so anything Gmail owns is overwritten wholesale. A history replay or a post-expiry backfill would silently resurrect the unread state. Clearing sets `$unset` rather than null, which keeps the predicate a plain `$exists`.
+
+`PATCH /api/emails/:id/read` with `{ read: true | false }`, any authenticated user — in a shared mailbox whoever picks the mail up is the one who marks it handled. The list marks read on open; the detail modal offers **Unread** to put it back, and shows who already opened it, so two agents don't answer the same candidate.
+
+**This does not touch Gmail.** The mailbox still shows the mail as unread. Pushing the label back needs `gmail.modify` in `SCOPE` *and* a Workspace super-admin re-authorising the delegation client_id for the new scope — domain-wide delegation grants are per-scope, so widening it is an Admin Console step, not a deploy.
+
+## Tagging (replaces one-bucket categorisation)
+
+An item is **tagged**, not bucketed. A tag is a `{ category, sub_category }` pair drawn from `CATEGORIZATION_SCHEMA` — the *same* 17 × 196 vocabulary a lone category always came from. Tagging changed how many an item may carry, not what they may say, so there is no new taxonomy to maintain and nothing for a model to invent.
+
+This exists because one bucket per item provably loses data: the validation row above (*Aadhaar OTP + upload query*) raised two issues and only the first was recorded. The old email prompt said so explicitly — "categorize the PRIMARY issue … mention the secondary ones in the summary". A summary is not queryable.
+
+**Shape.** Both the call and email documents (and their analysis records) now carry:
+
+| Field | Meaning |
+|---|---|
+| `tags` | every issue, most important first, capped at `MAX_TAGS` (5) |
+| `category` / `sub_category` | `tags[0]`, mirrored |
+
+The scalar pair is kept deliberately: every filter, export and dashboard written before tagging keeps working untouched, and the `Uncategorised` / `Content Unclear` / `Call too Short` sentinels stay exactly where they were. Sentinels are **never** tagged — they describe a state, not an issue, so `tags` is `[]` for them.
+
+**Validation.** `snapTags()` runs every proposed tag through the existing `snapToTaxonomy()`, so an invented name still cannot reach the database — the property that made `DYNAMIC_CATEGORIES_ENABLED` necessary. Duplicates collapse; the `Uncategorised` sentinel survives only as the sole tag.
+
+**Querying.** `src/lib/tags.js` owns both helpers so the three route files cannot drift:
+- `tagMatch(category, subCategory)` — matches the category on **any** tag. Passing both requires them on the *same* tag via `$elemMatch`; two independent dotted conditions would wrongly match a crossed pair.
+- `unwindTagsStage()` — one row per (item, tag) for the breakdown aggregations. **These totals sum above the item count by design** — they count issues, not emails.
+
+Every filter matches the tag array **or** the scalar pair, so a half-migrated collection answers correctly. There is no flag day.
+
+**Backfill.** `node scripts/backfillTags.js --dry-run` then without the flag. It widens each existing pair into a one-tag list; it re-analyses nothing and spends no Gemini quota, so issues dropped at analysis time stay dropped until those records are re-analysed. Safe to re-run — only documents with no `tags` field are touched.
+
+**Not covered:** ticket categories. Those 7 (`General Inquiry`, `Technical Issue`, …) are a human workflow taxonomy, unrelated to the content schema, and remain single-valued.
+
 ## Ticketing from email
 
 Tickets are no longer a call-only artefact. The same `tickets` collection, the same `TKT-` counter, and the same detail modal now serve both channels; what differs is only how the customer is identified.

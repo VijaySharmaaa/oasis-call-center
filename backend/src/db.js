@@ -31,7 +31,17 @@ function getDb() {
           db.collection('emails').createIndex({ thread_id: 1 }),
           db.collection('emails').createIndex({ from_email: 1 }),
           db.collection('emails').createIndex({ is_unread: 1, received_at: -1 }),
+          // The unread pill and filter read both halves of "unread in Gmail and
+          // not yet opened here", so the index has to cover read_at too.
+          db.collection('emails').createIndex({ is_unread: 1, read_at: 1, received_at: -1 }),
           db.collection('emails').createIndex({ category: 1, received_at: -1 }),
+          // Multikey indexes over the tag array — one entry per tag per doc, so
+          // a category filter is served whether it hits the primary tag or a
+          // secondary one.
+          db.collection('emails').createIndex({ 'tags.category': 1, received_at: -1 }),
+          db.collection('emails').createIndex({ 'tags.sub_category': 1 }),
+          db.collection('calls').createIndex({ 'tags.category': 1, created_at: -1 }),
+          db.collection('call_analysis').createIndex({ 'tags.category': 1 }),
           db.collection('email_analysis').createIndex({ gmail_id: 1 }, { unique: true }),
           db.collection('email_analysis').createIndex({ status: 1, created_at: -1 }),
           db.collection('email_analysis').createIndex({ category: 1 }),
