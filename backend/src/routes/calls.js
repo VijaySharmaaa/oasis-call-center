@@ -427,7 +427,6 @@ router.get('/stats/summary', async (req, res) => {
       { $match: { status: 'completed', bug_category: { $exists: true, $nin: [null, '', '-', 'Uncategorised'] }, ...dateRangeFilter } },
       { $group: { _id: '$bug_category', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
-      { $limit: 10 },
     ]).toArray(),
   ]);
 
@@ -465,9 +464,13 @@ router.get('/stats/summary', async (req, res) => {
     catMap[category].total += count;
     if (sub_category) catMap[category].subs.push({ sub_category, count });
   });
-  const categoryBreakdown = Object.values(catMap)
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 10);
+  const allCategories = Object.values(catMap).sort((a, b) => b.total - a.total);
+  const categoryBreakdown = allCategories.slice(0, 10);
+  // Every categorised issue, not just the ten sent down — a share of the top
+  // ten is not a share of anything a reader would recognise as the whole. One
+  // row per (call, tag), so a call raising two issues counts in both: this is
+  // the total number of ISSUES, which is what the shares divide.
+  const categoryTotal = allCategories.reduce((n, c) => n + c.total, 0);
 
   // Build insights map: { [category]: [top 3 insights] }
   const categoryInsights = {};
@@ -482,9 +485,12 @@ router.get('/stats/summary', async (req, res) => {
     col.find(roleFilter).sort({ created_at: -1 }).limit(1).toArray(),
   ]);
 
-  const topBugs = topBugsRaw.map(r => ({ category: r._id, count: r.count }));
+  const topBugs = topBugsRaw.slice(0, 10).map(r => ({ category: r._id, count: r.count }));
+  // Every categorised bug, not just the ten sent down — a share of the top ten
+  // is not a share of anything a reader would recognise as the whole.
+  const topBugsTotal = topBugsRaw.reduce((n, r) => n + r.count, 0);
 
-  res.json({ total, received, missed, recorded, today, avgDuration: Math.round(agg?.avgDuration || 0), avgAgentDuration: Math.round(agg?.avgAgentDuration || 0), latestMissed, todayByAgent, avgDurationByAgent, categoryBreakdown, categoryInsights, topBugs, minDate: minDateDoc[0]?.created_at ?? null, maxDate: maxDateDoc[0]?.created_at ?? null });
+  res.json({ total, received, missed, recorded, today, avgDuration: Math.round(agg?.avgDuration || 0), avgAgentDuration: Math.round(agg?.avgAgentDuration || 0), latestMissed, todayByAgent, avgDurationByAgent, categoryBreakdown, categoryTotal, categoryInsights, topBugs, topBugsTotal, minDate: minDateDoc[0]?.created_at ?? null, maxDate: maxDateDoc[0]?.created_at ?? null });
 });
 
 // Check if a click2call for a given number was confirmed by webhook within a time window

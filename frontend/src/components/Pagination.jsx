@@ -15,7 +15,7 @@ function PagBtn({ children, onClick, disabled, active, title }) {
       title={title}
       className={`w-8 h-8 flex items-center justify-center rounded-md text-sm transition-colors ${
         active
-          ? 'bg-indigo-600 text-white font-semibold'
+          ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200 font-semibold'
           : disabled
             ? 'text-slate-300 dark:text-zinc-600 cursor-not-allowed'
             : 'text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800'

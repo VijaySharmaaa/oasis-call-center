@@ -26,4 +26,10 @@ export default defineConfig([
       'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
     },
   },
+  {
+    // The screenshot harness runs in Node, under Playwright, not in the page —
+    // it builds fixture tokens with Buffer and never ships to a browser.
+    files: ['visual/**/*.js', 'playwright.config.js'],
+    languageOptions: { globals: globals.node },
+  },
 ])

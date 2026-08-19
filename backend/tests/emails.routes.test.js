@@ -164,6 +164,12 @@ beforeEach(() => {
       message_count: 1, inbound_count: 1,
       processed_at: new Date('2026-08-16T10:05:00Z'), attempts: 0, error: null,
     }],
+    // Resolution is a ticket fact, not a mail fact: Aasha's was closed, Ravi's
+    // is still open, and the trashed sender never had one raised at all.
+    tickets: [
+      { _id: 't1', ticket_number: 'TKT-0001', source: 'email', customer_email: 'aasha@example.com', status: 'Closed' },
+      { _id: 't2', ticket_number: 'TKT-0002', source: 'email', customer_email: 'ravi@example.com',  status: 'Open' },
+    ],
     email_sync_state: [{ _id: 'support@upessc.org', phase: 'incremental', synced_total: 12, last_sync_at: new Date('2026-08-17T09:00:00Z'), last_error: null }],
     email_analysis: [{
       gmail_id: 'm1', status: 'completed', category: 'Payment & Fee',
@@ -500,6 +506,21 @@ describe('GET /api/emails/conversations', () => {
   it('hides a conversation whose every message is trashed, unless asked', async () => {
     expect(convIds(await get('/api/emails/conversations').expect(200))).not.toContain('spam@example.com');
     expect(convIds(await get('/api/emails/conversations?includeTrashed=true').expect(200))).toContain('spam@example.com');
+  });
+
+  /**
+   * The row tint. Resolved is the daily report's definition — a ticket for that
+   * address reached Resolved or Closed — and it is stamped per page rather than
+   * asked for a row at a time.
+   */
+  it('marks a conversation resolved when the sender has a closed ticket', async () => {
+    const res = await get('/api/emails/conversations').expect(200);
+    const byId = Object.fromEntries(res.body.conversations.map(c => [c.id, c.is_resolved]));
+    expect(byId['aasha@example.com']).toBe(true);
+    // An open ticket is not resolution, and neither is having no ticket at all.
+    expect(byId['ravi@example.com']).toBe(false);
+    const trashed = await get('/api/emails/conversations?includeTrashed=true').expect(200);
+    expect(trashed.body.conversations.find(c => c.id === 'spam@example.com').is_resolved).toBe(false);
   });
 
   it('counts unread by conversation, not by message', async () => {

@@ -86,6 +86,13 @@ const CONVERSATIONS = [
     has_attachments: false, is_trashed: true, needs_analysis: true },
 ];
 
+const TICKETS = [
+  // Aasha's issue was settled; Ravi has an open one; Meena has none at all.
+  { _id: 'k1', customer_email: 'aasha@example.com', status: 'Resolved', title: 'Refund issued' },
+  { _id: 'k2', customer_email: 'aasha@example.com', status: 'Open',     title: 'Something else' },
+  { _id: 'k3', customer_email: 'ravi@example.com',  status: 'Open',     title: 'OTR edit' },
+];
+
 const EMAILS = [
   { gmail_id: 'm1', conversation_id: 'aasha@example.com', subject: 'Fee debited twice',
     body_text: 'Sir mera fee do baar cut gaya hai.', snippet: 'fee', is_deleted: false },
@@ -112,6 +119,7 @@ beforeEach(() => {
     email_conversations: CONVERSATIONS,
     emails: EMAILS,
     conversation_analysis: ANALYSIS,
+    tickets: TICKETS,
   });
   app = express();
   app.use(express.json());
@@ -248,6 +256,21 @@ describe('what a row says', () => {
     const [row] = (await exportCsv({ search: 'Aasha' })).records;
     expect(row['Language']).toBe('Hinglish, English');
     expect(row['Model']).toBe('gemini-2.5-flash');
+  });
+
+  it('says whether the sender\'s issue was settled', async () => {
+    const [aasha] = (await exportCsv({ search: 'Aasha' })).records;
+    expect(aasha).toMatchObject({ Resolution: 'Resolved', Tickets: '2' });
+
+    const [ravi] = (await exportCsv({ search: 'Ravi' })).records;
+    expect(ravi).toMatchObject({ Resolution: 'Unresolved', Tickets: '1' });
+  });
+
+  /* A sender nobody raised a ticket for is unresolved, not blank: the question
+     the column answers is "is there anything left to do here". */
+  it('counts a sender with no ticket at all as unresolved', async () => {
+    const [meena] = (await exportCsv({ includeTrashed: 'true', search: 'trashed' })).records;
+    expect(meena).toMatchObject({ Resolution: 'Unresolved', Tickets: '0' });
   });
 
   it('reports a chain with new mail since its verdict as outstanding', async () => {

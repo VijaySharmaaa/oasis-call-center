@@ -31,9 +31,11 @@ function formatDuration(sec) {
  * wants only one.
  */
 const SOURCE_TABS = [
-  { value: 'all',    label: 'All',    bg: ['#ffffff', '#3f3f46'],             text: 'text-slate-900 dark:text-zinc-100' },
-  { value: 'calls',  label: 'Calls',  bg: ['#e0e7ff', 'rgba(49,46,129,0.5)'], text: 'text-indigo-700 dark:text-indigo-400' },
-  { value: 'emails', label: 'Emails', bg: ['#ccfbf1', 'rgba(19,78,74,0.5)'],  text: 'text-teal-700 dark:text-teal-400' },
+  { value: 'all',    label: 'All',    bg: ['#fbf6ec', '#fbf6ec'], text: 'text-slate-900' },
+  { value: 'calls',  label: 'Calls',  bg: ['#f6dbd2', '#f6dbd2'], text: 'text-indigo-800' },
+  // Teal, not the accent: this separates the two queues, and both tabs in one
+  // hue would say nothing. Pastel teal, matching the token ramp.
+  { value: 'emails', label: 'Emails', bg: ['#cfe7e7', '#cfe7e7'], text: 'text-teal-800' },
 ];
 
 /** The one-glance marker for which queue a row came from. */

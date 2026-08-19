@@ -1,13 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useTheme } from '../hooks/useTheme';
 
-const THEME_CYCLE = { system: 'light', light: 'dark', dark: 'light' };
-const THEME_ICON = {
-  dark:   <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 1.5a5.5 5.5 0 010 11 5.5 5.5 0 010-11z" opacity=".3"/><path d="M8 0a8 8 0 100 16A8 8 0 008 0zm2.293 3.293a6 6 0 11-7 7 6.007 6.007 0 007-7z"/></svg>,
-  light:  <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M8 11a3 3 0 100-6 3 3 0 000 6zm0 1a4 4 0 100-8 4 4 0 000 8zM8 0a.5.5 0 01.5.5v1a.5.5 0 01-1 0v-1A.5.5 0 018 0zm0 13a.5.5 0 01.5.5v1a.5.5 0 01-1 0v-1A.5.5 0 018 13zm8-5a.5.5 0 01-.5.5h-1a.5.5 0 010-1h1a.5.5 0 01.5.5zM2 8a.5.5 0 01-.5.5h-1a.5.5 0 010-1h1A.5.5 0 012 8zm10.657-5.657a.5.5 0 010 .707l-.707.707a.5.5 0 11-.707-.707l.707-.707a.5.5 0 01.707 0zm-9.193 9.193a.5.5 0 010 .707l-.707.707a.5.5 0 01-.707-.707l.707-.707a.5.5 0 01.707 0zm9.193.707a.5.5 0 01-.707 0l-.707-.707a.5.5 0 01.707-.707l.707.707a.5.5 0 010 .707zM4.464 4.465a.5.5 0 01-.707 0l-.707-.707a.5.5 0 01.707-.707l.707.707a.5.5 0 010 .707z"/></svg>,
-  system: <svg className="w-4 h-4 shrink-0" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 1a6 6 0 010 12V2z"/></svg>,
-};
 
 const NAV = [
   {
@@ -97,7 +90,6 @@ const NAV = [
 
 export default function Sidebar({ activePage, onNavigate }) {
   const { user, logout } = useAuth();
-  const { theme, setTheme } = useTheme();
   const [collapsed,   setCollapsed]   = useState(false);
   const [mobileOpen,  setMobileOpen]  = useState(false);
 
@@ -111,7 +103,9 @@ export default function Sidebar({ activePage, onNavigate }) {
         title={collapsed ? item.label : undefined}
         className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
           active
-            ? 'bg-indigo-600 text-white'
+            // A tint, not a slab: this marks where you are, it does not
+            // ask to be pressed.
+            ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200'
             : 'text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-900 dark:hover:text-zinc-100'
         }`}
       >
@@ -133,7 +127,7 @@ export default function Sidebar({ activePage, onNavigate }) {
             <path d="M10 3L5 8l5 5"/>
           </svg>
         </button>
-        <div className="w-8 h-8 shrink-0 rounded-lg bg-indigo-600 flex items-center justify-center">
+        <div className="w-8 h-8 shrink-0 rounded-lg bg-indigo-500 flex items-center justify-center">
           <svg className="w-4 h-4 text-white" viewBox="0 0 16 16" fill="currentColor">
             <path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z"/>
           </svg>
@@ -162,14 +156,6 @@ export default function Sidebar({ activePage, onNavigate }) {
           </div>
         )}
         <button
-          onClick={() => setTheme(THEME_CYCLE[theme])}
-          title={collapsed ? `Theme: ${theme}` : undefined}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 hover:text-slate-700 dark:hover:text-zinc-200 transition-colors text-xs"
-        >
-          {THEME_ICON[theme] ?? THEME_ICON.system}
-          {!collapsed && <span className="capitalize">{theme === 'dark' ? 'Dark' : theme === 'light' ? 'Light' : 'System'}</span>}
-        </button>
-        <button
           onClick={logout}
           title={collapsed ? 'Sign out' : undefined}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-slate-500 dark:text-zinc-400 hover:bg-red-50 dark:hover:bg-red-950/30 hover:text-red-600 dark:hover:text-red-400 transition-colors text-xs"
@@ -197,7 +183,7 @@ export default function Sidebar({ activePage, onNavigate }) {
             <path fillRule="evenodd" d="M3 5a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM3 15a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd"/>
           </svg>
         </button>
-        <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center shrink-0">
+        <div className="w-7 h-7 rounded-lg bg-indigo-500 flex items-center justify-center shrink-0">
           <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 16 16" fill="currentColor">
             <path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9z"/>
           </svg>

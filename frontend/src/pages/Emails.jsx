@@ -5,11 +5,11 @@ import { useDateRange } from '../hooks/useCalls';
 import EmailConversationModal from '../components/EmailConversationModal';
 import EmailTicketModal from '../components/EmailTicketModal';
 import TagChips, { tagsOf } from '../components/TagChips';
-import AnalysisStatus, { analysisStateOf } from '../components/AnalysisStatus';
+import AnalysisStatus, { analysisStateOf, AnalysedTick } from '../components/AnalysisStatus';
 import PageHeader from '../components/PageHeader';
 import { usePageChrome, usePageRefresh } from '../contexts/PageChromeContext';
 import Pagination from '../components/Pagination';
-import ColorSelect from '../components/ColorSelect';
+import FilterMenu from '../components/FilterMenu';
 import StatusTabs from '../components/StatusTabs';
 import ExportButton from '../components/ExportButton';
 import { useExportJob } from '../hooks/useExportJob';
@@ -20,10 +20,18 @@ const API = import.meta.env.VITE_API_URL ?? '';
  * Read state is the one thing this list is primarily triaged by, so it gets the
  * pill row the Call Report gives to Received/Missed rather than a dropdown.
  */
+/* Written as literals because the slider animates its colour through inline
+   style, which cannot resolve a Tailwind class — so these are the palette's own
+   values, copied by hand. They were stock Tailwind (a white pill, indigo-100,
+   emerald-100) and never passed through the theme tokens, which is why this row
+   stayed loud while the rest of the page went pastel. Both halves of each pair
+   are the same now: the portal is light-only, and a slider that flipped to a
+   charcoal pill if a stray `dark` class appeared is exactly the failure this is
+   fixing. */
 const READ_TABS = [
-  { value: '',      label: 'All',    bg: ['#ffffff', '#3f3f46'],            text: 'text-slate-900 dark:text-zinc-100' },
-  { value: 'true',  label: 'Unread', bg: ['#e0e7ff', 'rgba(49,46,129,0.5)'], text: 'text-indigo-700 dark:text-indigo-400' },
-  { value: 'false', label: 'Read',   bg: ['#d1fae5', 'rgba(6,78,59,0.4)'],   text: 'text-emerald-700 dark:text-emerald-400' },
+  { value: '',      label: 'All',    bg: ['#fbf6ec', '#fbf6ec'], text: 'text-slate-900' },
+  { value: 'true',  label: 'Unread', bg: ['#f6dbd2', '#f6dbd2'], text: 'text-indigo-800' },
+  { value: 'false', label: 'Read',   bg: ['#d5e9da', '#d5e9da'], text: 'text-emerald-800' },
 ];
 
 /**
@@ -81,6 +89,59 @@ const ANALYSIS_COLORS = {
 /** Unread means unread in Gmail AND not yet opened by anyone in Oasis. */
 function isUnread(conversation) {
   return (conversation.unread_count || 0) > 0;
+}
+
+/**
+ * Row tint: has this sender's issue been settled?
+ *
+ * Green is a ticket of theirs that reached Resolved or Closed — the server
+ * stamps `is_resolved`, using the same definition the daily report counts by.
+ * Everything else is red, senders nobody has raised a ticket for included:
+ * the question the colour answers is "is there anything left to do here", and
+ * for an unticketed row the answer is still yes.
+ */
+const ROW_TINT = {
+  resolved:   'bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:hover:bg-emerald-950/50',
+  unresolved: 'bg-red-50 hover:bg-red-100 dark:bg-red-950/25 dark:hover:bg-red-950/40',
+};
+
+function rowTint(conversation) {
+  return conversation.is_resolved ? ROW_TINT.resolved : ROW_TINT.unresolved;
+}
+
+/**
+ * The same fact as the row tint, in words.
+ *
+ * The tint alone asks the reader to know what green means, and anyone who
+ * cannot separate the two hues gets nothing from it at all — colour was the
+ * only carrier. This says it, and the tint becomes the thing that lets you scan
+ * a column of them at a glance rather than the thing you have to decode.
+ */
+function ResolutionChip({ conversation }) {
+  const resolved = !!conversation.is_resolved;
+  return (
+    <span
+      title={resolved
+        ? 'A ticket for this sender is Resolved or Closed'
+        : 'No closed ticket for this sender — including senders nobody has raised one for'}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${
+        resolved
+          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200'
+          : 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-200'
+      }`}
+    >
+      {resolved ? (
+        <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M3 8.5l3.5 3.5L13 4.5" />
+        </svg>
+      ) : (
+        <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden>
+          <path d="M8 3.5v6M8 12.5h.01" />
+        </svg>
+      )}
+      {resolved ? 'Resolved' : 'Unresolved'}
+    </span>
+  );
 }
 
 /** Same affordance as the call report's row action, so it reads as one feature. */
@@ -342,44 +403,53 @@ export default function Emails() {
           value={unread}
           onChange={v => { setUnread(v); setPage(1); }}
         />
-        <ColorSelect
-          value={replied}
-          onChange={v => { setReplied(v); setPage(1); }}
-          options={REPLIED_OPTIONS}
-          placeholder="Any Reply State"
-          colorMap={REPLIED_COLORS}
-        />
-        <ColorSelect
-          value={analysis}
-          onChange={v => { setAnalysis(v); setPage(1); }}
-          options={ANALYSIS_OPTIONS}
-          placeholder="Any Analysis"
-          colorMap={ANALYSIS_COLORS}
-        />
-        <ColorSelect
-          value={attachments}
-          onChange={v => { setAttachments(v); setPage(1); }}
-          options={[
-            { value: '',     label: 'Any Content' },
-            { value: 'true', label: 'With Attachments' },
+        {/* Four dropdowns' worth of dimensions behind one button. Read state
+            keeps its pill row above: it is the one thing this list is triaged
+            by, and burying the primary filter to save width is a bad trade. */}
+        <FilterMenu
+          filters={[
+            {
+              key: 'replied',
+              label: 'Reply State',
+              value: replied,
+              onChange: v => { setReplied(v); setPage(1); },
+              options: REPLIED_OPTIONS,
+              colorMap: REPLIED_COLORS,
+            },
+            {
+              key: 'analysis',
+              label: 'Analysis',
+              value: analysis,
+              onChange: v => { setAnalysis(v); setPage(1); },
+              options: ANALYSIS_OPTIONS,
+              colorMap: ANALYSIS_COLORS,
+            },
+            {
+              key: 'attachments',
+              label: 'Content',
+              value: attachments,
+              onChange: v => { setAttachments(v); setPage(1); },
+              options: [
+                { value: '',     label: 'Any Content' },
+                { value: 'true', label: 'With Attachments' },
+              ],
+            },
+            {
+              key: 'category',
+              label: 'Category',
+              value: category,
+              onChange: v => { setCategory(v); setPage(1); },
+              options: [
+                { value: '', label: 'All Categories' },
+                // Sentinels the analysis worker can assign, surfaced explicitly
+                // so they are filterable rather than hidden among real ones.
+                { value: 'Uncategorised',   label: 'Uncategorised' },
+                { value: 'Content Unclear', label: 'Content Unclear' },
+                { value: 'Email too Short', label: 'Email too Short' },
+                ...categories.map(c => ({ value: c.name, label: c.name })),
+              ],
+            },
           ]}
-          placeholder="Any Content"
-          colorMap={{}}
-        />
-        <ColorSelect
-          value={category}
-          onChange={v => { setCategory(v); setPage(1); }}
-          options={[
-            { value: '', label: 'All Categories' },
-            // Sentinels the analysis worker can assign, surfaced explicitly so
-            // they are filterable rather than hidden among real categories.
-            { value: 'Uncategorised',   label: 'Uncategorised' },
-            { value: 'Content Unclear', label: 'Content Unclear' },
-            { value: 'Email too Short', label: 'Email too Short' },
-            ...categories.map(c => ({ value: c.name, label: c.name })),
-          ]}
-          placeholder="All Categories"
-          colorMap={{}}
         />
         {pageFilters && (
           <button
@@ -422,7 +492,7 @@ export default function Emails() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-100 dark:bg-zinc-900 text-slate-500 dark:text-zinc-400 text-left text-xs uppercase tracking-wide">
-                  {['Sender', 'Latest Subject', 'AI Insight', 'Category', 'Sub-category', '', 'Last Activity', ''].map((h, i) => (
+                  {['Sender', 'Latest Subject', 'AI Insight', 'Category', 'Resolution', '', 'Last Activity', ''].map((h, i) => (
                     <th key={i} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -432,7 +502,12 @@ export default function Emails() {
                   <tr
                     key={c.id}
                     onClick={() => openConversation(c)}
-                    className="border-t border-slate-100 dark:border-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-900/50 cursor-pointer transition-colors"
+                    title={c.is_resolved ? 'Resolved — a ticket for this sender is Resolved or Closed' : 'Unresolved — no closed ticket for this sender'}
+                    // A step deeper than the table's own border, on purpose.
+                    // The row tints are the reason a row needs an edge at all —
+                    // two red rows in a run read as one block — and a hairline
+                    // pale enough to sit quietly on white disappears on them.
+                    className={`border-t border-slate-300 dark:border-zinc-700 cursor-pointer transition-colors ${rowTint(c)}`}
                   >
                     <td className="px-3 py-2.5 max-w-[220px]">
                       <div className="flex items-center gap-1.5">
@@ -455,22 +530,30 @@ export default function Emails() {
                         ? <span className="text-slate-600 dark:text-zinc-300">{c.ai_insight}</span>
                         : <span className="text-slate-400 dark:text-zinc-500 italic">{c.analysed_at ? '—' : c.last_inbound_snippet || c.last_snippet}</span>}
                     </td>
-                    <td className="px-3 py-2.5 max-w-[220px] text-xs">
-                      {/* A chain with no verdict yet shows its queue state in
-                          place of TagChips' bare "pending", which says less and
-                          offers nothing to press. */}
-                      {tagsOf(c).length > 0
-                        ? <TagChips item={c} max={2} />
-                        : !analysisStateOf(c, { showAnalysed: true }) && <span className="text-slate-300 dark:text-zinc-600">—</span>}
+                    {/* Each sub-category rides its own parent chip rather than
+                        sitting in a column of its own: an item can carry several
+                        tags, and a single Sub-category cell beside two chips
+                        could not say which one it belonged to. */}
+                    <td className="px-3 py-2.5 max-w-[340px] text-xs">
+                      <div className="flex items-start gap-1.5">
+                        {/* A chain with no verdict yet shows its queue state in
+                            place of TagChips' bare "pending", which says less and
+                            offers nothing to press. */}
+                        {tagsOf(c).length > 0
+                          ? <TagChips item={c} max={2} showSub />
+                          : !analysisStateOf(c) && <span className="text-slate-300 dark:text-zinc-600">—</span>}
+                        <AnalysedTick item={c} className="mt-0.5" />
+                      </div>
                       <AnalysisStatus
                         item={c}
                         analyseUrl={`/api/emails/conversations/${encodeURIComponent(c.id)}/analyse`}
                         onQueued={() => load(true)}
-                        showAnalysed
                         className="mt-1"
                       />
                     </td>
-                    <td className="px-3 py-2.5 max-w-[200px] truncate text-slate-500 dark:text-zinc-400 text-xs">{c.sub_category || '—'}</td>
+                    <td className="px-3 py-2.5">
+                      <ResolutionChip conversation={c} />
+                    </td>
                     <td className="px-3 py-2.5">
                       {c.has_attachments && (
                         <svg title="Has attachments" className="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -502,7 +585,7 @@ export default function Emails() {
               <div
                 key={c.id}
                 onClick={() => openConversation(c)}
-                className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-4 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors"
+                className={`border border-slate-200 dark:border-zinc-800 rounded-xl p-4 cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors ${rowTint(c)}`}
               >
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <span className={`text-sm truncate ${isUnread(c) ? 'font-bold text-slate-900 dark:text-zinc-100' : 'font-medium text-slate-600 dark:text-zinc-300'}`}>
@@ -524,9 +607,13 @@ export default function Emails() {
                 </div>
                 <p className={`text-sm mb-1 ${isUnread(c) ? 'font-semibold text-slate-900 dark:text-zinc-100' : 'text-slate-700 dark:text-zinc-300'}`}>{c.last_subject}</p>
                 <p className="text-xs text-slate-400 dark:text-zinc-500 line-clamp-2">{c.last_inbound_snippet || c.last_snippet}</p>
-                {c.category && (
-                  <div className="mt-2">
+                <div className="mt-2">
+                  <ResolutionChip conversation={c} />
+                </div>
+                {(tagsOf(c).length > 0 || analysisStateOf(c, { showAnalysed: true }) === 'analysed') && (
+                  <div className="mt-2 flex items-start gap-1.5">
                     <TagChips item={c} max={3} showSub />
+                    <AnalysedTick item={c} className="mt-0.5" />
                   </div>
                 )}
                 {/* Outside the block above, because the rows that most need
@@ -535,7 +622,6 @@ export default function Emails() {
                   item={c}
                   analyseUrl={`/api/emails/conversations/${encodeURIComponent(c.id)}/analyse`}
                   onQueued={() => load(true)}
-                  showAnalysed
                   className="mt-2"
                 />
               </div>

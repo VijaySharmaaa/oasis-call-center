@@ -331,7 +331,6 @@ router.get('/stats/summary', async (req, res) => {
         ...unwindTagsStage(),
         { $group: { _id: '$_tag_list.category', count: { $sum: 1 } } },
         { $sort: { count: -1 } },
-        { $limit: 6 },
       ]).toArray(),
       // The mailbox's answer to "Latest Missed Calls": who is still waiting.
       db.collection('email_conversations')
@@ -342,6 +341,10 @@ router.get('/stats/summary', async (req, res) => {
         .toArray(),
     ]);
 
+  const named = topCategoriesRaw
+    .filter(c => c._id)
+    .map(c => ({ category: c._id, count: c.count }));
+
   res.json({
     total,
     replies,
@@ -350,9 +353,12 @@ router.get('/stats/summary', async (req, res) => {
     read: Math.max(0, inboundTotal - unread),
     conversations,
     awaitingAnalysis,
-    topCategories: topCategoriesRaw
-      .filter(c => c._id)
-      .map(c => ({ category: c._id, count: c.count })),
+    topCategories: named.slice(0, 6),
+    // Every categorised issue, not just the six sent down — a share of the top
+    // six is not a share of anything a reader would recognise as the whole.
+    // Named to match the call summary's field, because the Dashboard adds the
+    // two together.
+    categoryTotal: named.reduce((n, c) => n + c.count, 0),
     latestUnread: latestUnread.map(({ _id, ...rest }) => ({ id: _id, ...rest })),
   });
 });
@@ -438,6 +444,36 @@ async function withAnalysisState(db, conversations) {
   }));
 }
 
+/** The statuses that mean a ticket is done, as the daily report counts them. */
+const RESOLVED_TICKET_STATUSES = ['Resolved', 'Closed'];
+
+/**
+ * Stamp each conversation on ONE page with whether the sender's issue has been
+ * settled, so the list can be read at a glance rather than a row at a time.
+ *
+ * Resolved means the same thing it means in the daily report (lib/reportData):
+ * a ticket of theirs reached Resolved or Closed. Scoped by ADDRESS rather than
+ * by message, because the row is a person and the ticket button beside it is
+ * scoped that way too — a follow-up mail about an issue we closed last week
+ * belongs to the sender we already dealt with.
+ *
+ * One indexed fetch per page (tickets.customer_email is indexed), never per row.
+ */
+async function withResolution(db, conversations) {
+  const addressOf = c => String(c.participant_email || c.id || '').toLowerCase();
+  const addresses = [...new Set(conversations.map(addressOf).filter(Boolean))];
+
+  const resolved = addresses.length
+    ? await db.collection('tickets').distinct('customer_email', {
+        customer_email: { $in: addresses },
+        status: { $in: RESOLVED_TICKET_STATUSES },
+      })
+    : [];
+  const resolvedSet = new Set(resolved.map(a => String(a).toLowerCase()));
+
+  return conversations.map(c => ({ ...c, is_resolved: resolvedSet.has(addressOf(c)) }));
+}
+
 /**
  * One message as it appears inside a chat.
  *
@@ -490,7 +526,7 @@ router.get('/conversations', async (req, res) => {
     db.collection('email_conversations').countDocuments({ unread_count: { $gt: 0 }, is_trashed: { $ne: true } }),
   ]);
 
-  const conversations = await withAnalysisState(db, docs.map(conversationToApi));
+  const conversations = await withResolution(db, await withAnalysisState(db, docs.map(conversationToApi)));
   res.json({ conversations, total, unreadCount });
 });
 

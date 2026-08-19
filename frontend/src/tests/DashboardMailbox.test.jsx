@@ -10,6 +10,7 @@
  * these tests are about the email data path, not about re-testing those.
  */
 import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../contexts/AuthContext', () => ({
@@ -34,7 +35,9 @@ vi.mock('../contexts/PageChromeContext', () => ({
 
 vi.mock('../hooks/useCalls', () => ({
   useStats: () => ({ stats: { total: 0, received: 0, missed: 0 }, refetch: () => {} }),
+  useCalls: () => ({ calls: [], total: 0, loading: false, error: null, refetch: () => {} }),
   useDateRange: () => ({ minDate: '2026-01-01' }),
+  useAgentMap: () => ({}),
   initiateCall: () => Promise.resolve({ status: 'Success' }),
   pollClick2Call: () => {},
 }));
@@ -59,11 +62,23 @@ const EMAIL_STATS = {
   ],
 };
 
+/** What the conversations endpoint returns for the expandable mail list. */
+const CONVERSATIONS = [
+  { id: 'aasha@example.com', participant_name: 'Aasha', participant_email: 'aasha@example.com',
+    last_subject: 'Fee debited twice', last_message_at: '2026-08-16T10:00:00Z',
+    message_count: 3, unread_count: 3 },
+  { id: 'ravi@example.com', participant_name: 'Ravi', participant_email: 'ravi@example.com',
+    last_subject: 'OTR edit query', last_message_at: '2026-08-15T10:00:00Z',
+    message_count: 1, unread_count: 0 },
+];
+
 /** Routes every call the Dashboard makes; only the mailbox one carries data. */
 function stubDashboardFetch(emailStats = EMAIL_STATS) {
   const fetchMock = vi.fn(async (url) => {
     const href = String(url);
-    const body = href.includes('/api/emails/stats/summary') ? emailStats : { tickets: [], total: 0 };
+    let body = { tickets: [], total: 0 };
+    if (href.includes('/api/emails/stats/summary')) body = emailStats;
+    else if (href.includes('/api/emails/conversations')) body = { conversations: CONVERSATIONS, total: CONVERSATIONS.length };
     return { ok: true, status: 200, json: async () => body };
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -76,7 +91,8 @@ function mailboxQuery(fetchMock) {
   return new URL(String(call[0]), 'http://localhost').searchParams;
 }
 
-const mailbox = () => screen.getByText('Mailbox').closest('div').parentElement;
+const mailbox = () =>
+  screen.getByText('Mail', { selector: 'p' }).closest('div').parentElement;
 
 beforeEach(() => { range = { dateFrom: '', dateTo: '' }; });
 
@@ -85,12 +101,12 @@ describe('the mailbox counters', () => {
     stubDashboardFetch();
     render(<Dashboard />);
 
-    await waitFor(() => expect(screen.getByText('Total Emails')).toBeInTheDocument());
-    for (const label of ['Total Emails', 'Replies', 'Unread', 'Read']) {
-      expect(screen.getByText(label)).toBeInTheDocument();
+    await waitFor(() => expect(within(mailbox()).getByText('Replies')).toBeInTheDocument());
+    const panel = within(mailbox());
+    for (const label of ['Total', 'Replies', 'Unread', 'Read']) {
+      expect(panel.getByText(label)).toBeInTheDocument();
     }
     // Counted up by AnimatedNumber, so the final value is what to wait for.
-    const panel = within(mailbox());
     await waitFor(() => expect(panel.getByText('42')).toBeInTheDocument());
     expect(panel.getByText('12')).toBeInTheDocument();
     expect(panel.getByText('7')).toBeInTheDocument();
@@ -139,28 +155,77 @@ describe('the range the counters are asked for', () => {
 });
 
 describe('the mailbox panels', () => {
-  it('lists who is still waiting, with how many messages', async () => {
-    stubDashboardFetch();
-    render(<Dashboard />);
-
-    await waitFor(() => expect(screen.getByText('Aasha')).toBeInTheDocument());
-    expect(screen.getByText('Fee debited twice')).toBeInTheDocument();
-    expect(screen.getByText('3')).toBeInTheDocument();
-  });
-
   it('breaks the mailbox down by category', async () => {
     stubDashboardFetch();
     render(<Dashboard />);
 
-    await waitFor(() => expect(screen.getByText('Payment & Fee')).toBeInTheDocument());
-    expect(screen.getByText('Uploads & Documents')).toBeInTheDocument();
+    // Scoped: the Category Mix pie below the split now merges both channels,
+    // so a mail category also appears there.
+    await waitFor(() =>
+      expect(within(mailbox()).getByText('Payment & Fee')).toBeInTheDocument());
+    expect(within(mailbox()).getByText('Uploads & Documents')).toBeInTheDocument();
   });
 
-  it('says nothing is unread rather than showing an empty box', async () => {
-    stubDashboardFetch({ ...EMAIL_STATS, latestUnread: [], topCategories: [] });
+  it('says nothing is analysed rather than showing an empty box', async () => {
+    stubDashboardFetch({ ...EMAIL_STATS, topCategories: [] });
     render(<Dashboard />);
 
-    await waitFor(() => expect(screen.getByText('Nothing unread')).toBeInTheDocument());
-    expect(screen.getByText('Nothing analysed yet')).toBeInTheDocument();
+    // Scoped: both halves draw their categories with the same component, so
+    // this message appears on the call side too.
+    await waitFor(() =>
+      expect(within(mailbox()).getByText('Nothing analysed yet')).toBeInTheDocument());
+  });
+});
+
+/**
+ * The mail tile behaves exactly as the call tile does: the whole card is the
+ * control, and it opens the senders in place rather than leaving for the Emails
+ * tab. Going to another page to answer "which senders?" loses the range, the
+ * other half, and the reason you asked.
+ */
+describe('the mail list', () => {
+  const mailTile = () => screen.getByRole('button', { name: /show the mail list/i });
+
+  it('stays closed until the tile is pressed', async () => {
+    stubDashboardFetch();
+    render(<Dashboard />);
+
+    await waitFor(() => expect(mailTile()).toBeInTheDocument());
+    expect(screen.queryByText('Latest Subject')).not.toBeInTheDocument();
+  });
+
+  it('opens the senders in place, without navigating', async () => {
+    const onNavigate = vi.fn();
+    stubDashboardFetch();
+    render(<Dashboard onNavigate={onNavigate} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /show the mail list/i }));
+
+    await waitFor(() => expect(screen.getByText('Latest Subject')).toBeInTheDocument());
+    expect(screen.getByText('Aasha')).toBeInTheDocument();
+    expect(screen.getByText('Fee debited twice')).toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it('tints an unread sender, the same colour the tile gives the figure', async () => {
+    stubDashboardFetch();
+    render(<Dashboard />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /show the mail list/i }));
+
+    const row = (await screen.findByText('Aasha')).closest('tr');
+    expect(row.className).toMatch(/bg-amber-50/);
+    expect(within(row).getByText('3 unread')).toBeInTheDocument();
+  });
+
+  it('closes again', async () => {
+    stubDashboardFetch();
+    render(<Dashboard />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /show the mail list/i }));
+    await screen.findByText('Latest Subject');
+
+    await userEvent.click(screen.getByRole('button', { name: /hide the mail list/i }));
+    await waitFor(() => expect(screen.queryByText('Latest Subject')).not.toBeInTheDocument());
   });
 });

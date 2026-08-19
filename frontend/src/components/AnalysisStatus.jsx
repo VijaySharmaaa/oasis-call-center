@@ -17,11 +17,12 @@ const API = import.meta.env.VITE_API_URL ?? '';
  *   awaiting_analysis  there is something to read and no current verdict on it
  *   queue_status       the queue row's status, or null when never enrolled
  *
- * `showAnalysed` opts a list into the positive terminal state as well. The Call
- * Report leaves it off: nearly every call is analysed, so a badge on each one
- * is a column of identical stickers. The Emails tab turns it on, because a
- * verdict there covers a whole chain and an operator wants to see at a glance
- * that the newest message is included in it.
+ * `showAnalysed` opts a caller into the positive terminal state as well, as a
+ * full badge. Neither list turns it on: in a table where nearly every row is
+ * analysed a badge on each one is a column of identical stickers. Lists use
+ * `AnalysedTick` below instead, which says the same thing in a mark. The badge
+ * is for a single record on screen — the conversation modal — where there is no
+ * column to crowd and the word is worth its width.
  */
 
 /**
@@ -74,11 +75,41 @@ const ACTIONABLE = { awaiting: 'Analyse now', failed: 'Retry' };
 // 'analysed' is deliberately absent: re-reading a chain whose verdict is
 // current is an explicit act, and it lives in the conversation itself.
 
-function Tick() {
+function Tick({ className = 'w-2.5 h-2.5' }) {
   return (
-    <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M3 8.5l3.5 3.5L13 4.5" />
     </svg>
+  );
+}
+
+/** Settled and current: a verdict exists and it covers the newest message. */
+const isAnalysed = item => analysisStateOf(item, { showAnalysed: true }) === 'analysed';
+
+/**
+ * The same terminal state the `Analysed` badge reported, reduced to a mark.
+ *
+ * A list where nearly every row is analysed turns that badge into a column of
+ * identical green stickers — the eye has to filter them before it can reach the
+ * categories sitting beside them, which is the thing the column is for. The
+ * tick keeps the one bit worth having and gives the width back. The date stays
+ * where the badge kept it, on the title.
+ *
+ * It reads `isAnalysed` rather than a bare `analysed_at` on purpose: a chain
+ * analysed last week that has had a reply since is NOT current, and a tick on
+ * that row would say the verdict covers a message it has never seen.
+ */
+export function AnalysedTick({ item, className = '' }) {
+  if (!isAnalysed(item)) return null;
+  return (
+    <span
+      role="img"
+      aria-label="Analysed"
+      title={item?.analysed_at ? `Analysed ${fmtDate(item.analysed_at)}` : 'Analysed'}
+      className={`inline-flex shrink-0 text-emerald-600 dark:text-emerald-400 ${className}`}
+    >
+      <Tick className="w-3.5 h-3.5" />
+    </span>
   );
 }
 

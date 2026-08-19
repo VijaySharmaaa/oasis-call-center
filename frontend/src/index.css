@@ -2,6 +2,230 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ── The portal palette ───────────────────────────────────────────────────
+   Beige ground, black ink, a warm red for anything that highlights.
+
+   This is done by REDEFINING THE TOKENS the existing utilities already
+   resolve to, not by rewriting a thousand class names. In Tailwind v4 every
+   colour utility compiles to `var(--color-<name>-<shade>)`, so moving the
+   variable moves every `bg-`, `text-`, `border-`, `ring-` and `placeholder-`
+   built on it at once — and keeps the diff reviewable.
+
+   Three families are remapped:
+
+     slate-*   the light-mode neutrals: surfaces, borders, and the text ladder
+     zinc-*    the dark-mode neutrals. The portal is pinned to light so these
+               are mostly inert, but they are mapped INVERTED — the shades
+               that used to be near-black surfaces are now beige ones — so a
+               stray `dark:` class or a screen written dark-first still lands
+               somewhere readable instead of punching a charcoal hole in the page.
+     indigo-*  the accent: primary buttons, links, active nav, focus rings,
+               unread dots. This is the "highlight" colour.
+
+   NOT remapped, on purpose: emerald / amber / red / sky / blue / violet.
+   Those encode meaning — resolved, warning, failed, in flight — and flattening
+   them into the accent would cost the reader the distinction they carry. True
+   red stays reserved for destructive and error, a step deeper and more
+   saturated than the accent so the two do not read as the same thing.
+   ──────────────────────────────────────────────────────────────────────── */
+@theme {
+  /* Surfaces. `white` is the card ground across the app, so it becomes the
+     lightest beige rather than a hole in the page. Real white survives where
+     it means paper — see .report-sheet below. */
+  --color-white: #fbf6ec;
+
+  --color-slate-50:  #fbf6ec;   /* card / raised surface */
+  --color-slate-100: #f1e8d8;   /* hover, table head, subtle fill */
+  --color-slate-200: #e6dac5;   /* hairline border */
+  --color-slate-300: #d9c9ae;   /* border, disabled edge */
+  --color-slate-400: #8a7f6d;   /* icon, placeholder */
+  --color-slate-500: #6b6255;   /* muted text */
+  --color-slate-600: #4a4239;   /* secondary text */
+  --color-slate-700: #2e2a24;   /* body text */
+  --color-slate-800: #17140f;
+  --color-slate-900: #000000;   /* headings — the black the design asks for */
+  --color-slate-950: #000000;
+
+  /* The dark ladder, inverted: 900-950 were the darkest surfaces, so they are
+     now the page and card grounds; 100-400 were pale text, so they are ink. */
+  --color-zinc-50:  #000000;
+  --color-zinc-100: #000000;
+  --color-zinc-200: #17140f;
+  --color-zinc-300: #2e2a24;
+  --color-zinc-400: #4a4239;
+  --color-zinc-500: #6b6255;
+  --color-zinc-600: #d9c9ae;
+  --color-zinc-700: #e6dac5;
+  --color-zinc-800: #f1e8d8;
+  --color-zinc-900: #fbf6ec;
+  --color-zinc-950: #f5eee1;
+
+  /* ── The accent: terracotta ──────────────────────────────────────────
+     Deliberately a step warmer than the error red below. Both are warm, so
+     they have to be told apart by hue rather than by heat: this sits around
+     15°, the error family around 350°, which is far enough that a primary
+     button and a delete button do not read as the same thing. */
+  --color-indigo-50:  #fbeee9;
+  --color-indigo-100: #f6dbd2;
+  --color-indigo-200: #eec2b4;
+  --color-indigo-300: #e3a695;
+  --color-indigo-400: #ce745e;
+  --color-indigo-500: #c9735f;
+  --color-indigo-600: #a55242;   /* solid buttons — deep enough to carry cream text */
+  --color-indigo-700: #90483a;
+  --color-indigo-800: #753b30;
+  --color-indigo-900: #5e3128;
+  /* Tint, not shade: `dark:bg-indigo-950/40` is a *background* wash, and a
+     near-black one would sit on the page like a bruise. */
+  --color-indigo-950: #f6dbd2;
+
+  /* ── The semantic hues, in pastel ────────────────────────────────────
+     Every one of these was a stock Tailwind ramp: engineered for a white page
+     and, at full chroma on beige, loud enough that a row of status chips was
+     the first thing your eye went to on every screen.
+
+     Each is rebuilt to one shape:
+       50-200   pastel fills — chips, washes, panel tints
+       300-400  soft mids — dots, borders, small icons
+       500-600  muted mids — solid fills, and figures on beige
+       700-900  the ink that goes ON those pastel fills
+       950      a *tint*, because it is only ever used as `bg-…-950/40`
+
+     The 400s and a few 600s are not the tidy values you would pick by eye:
+     they were solved for — the least darkening that clears the target, hue and
+     saturation held — because yellow and orange in particular run out of
+     contrast on a light ground long before they look dark.
+
+     Softness is bounded, not free: scripts/check-contrast.mjs re-checks every
+     pair this app actually renders — ink on its own tint, figures on the two
+     beiges, cream on the solid accent — against WCAG AA. Run it before
+     changing a value here. Pastel is a look; unreadable is a bug. */
+
+  /* Error, destructive, overdue — berry red, cooler than the accent. */
+  --color-red-50:  #fdeef1;
+  --color-red-100: #f9d9df;
+  --color-red-200: #f1bcc6;
+  --color-red-300: #e59aa8;
+  --color-red-400: #d26f83;
+  --color-red-500: #c26076;
+  --color-red-600: #a94a60;
+  --color-red-700: #8b3c4e;
+  --color-red-800: #703140;
+  --color-red-900: #5a2834;
+  --color-red-950: #f9d9df;
+
+  /* Warning, pending, in-progress — honey. */
+  --color-amber-50:  #fdf4e5;
+  --color-amber-100: #f9e7c5;
+  --color-amber-200: #f0d29a;
+  --color-amber-300: #e4bb71;
+  --color-amber-400: #b8832d;
+  --color-amber-500: #b8862f;
+  --color-amber-600: #8a6323;
+  --color-amber-700: #7e5a22;
+  --color-amber-800: #64481c;
+  --color-amber-900: #513a17;
+  --color-amber-950: #f9e7c5;
+
+  /* Success, resolved, answered — sage. */
+  --color-emerald-50:  #ecf5ee;
+  --color-emerald-100: #d5e9da;
+  --color-emerald-200: #b2d5bc;
+  --color-emerald-300: #8bbd9a;
+  --color-emerald-400: #5e9970;
+  --color-emerald-500: #4a8460;
+  --color-emerald-600: #3e6f51;
+  --color-emerald-700: #345b43;
+  --color-emerald-800: #2a4936;
+  --color-emerald-900: #233b2c;
+  --color-emerald-950: #d5e9da;
+
+  /* The second queue (email vs call) — soft teal. */
+  --color-teal-50:  #eaf4f4;
+  --color-teal-100: #cfe7e7;
+  --color-teal-200: #a8d2d3;
+  --color-teal-300: #7db8ba;
+  --color-teal-400: #57989a;
+  --color-teal-500: #3f7c7f;
+  --color-teal-600: #35696c;
+  --color-teal-700: #2c5659;
+  --color-teal-800: #244548;
+  --color-teal-900: #1e3839;
+  --color-teal-950: #cfe7e7;
+
+  /* In flight, informational — powder blue. */
+  --color-sky-50:  #edf3f8;
+  --color-sky-100: #d6e5f0;
+  --color-sky-200: #b2cde2;
+  --color-sky-300: #89b1d0;
+  --color-sky-400: #6091bb;
+  --color-sky-500: #47769f;
+  --color-sky-600: #3d6488;
+  --color-sky-700: #33536f;
+  --color-sky-800: #2a4459;
+  --color-sky-900: #223749;
+  --color-sky-950: #d6e5f0;
+
+  /* Open tickets, links in tables — the same family, a shade deeper. */
+  --color-blue-50:  #eef2f9;
+  --color-blue-100: #d9e2f2;
+  --color-blue-200: #bac9e6;
+  --color-blue-300: #96acd6;
+  --color-blue-400: #728dc2;
+  --color-blue-500: #5972a6;
+  --color-blue-600: #4c6190;
+  --color-blue-700: #405077;
+  --color-blue-800: #35425f;
+  --color-blue-900: #2c364e;
+  --color-blue-950: #d9e2f2;
+
+  /* Category chips — dusty lilac. */
+  --color-violet-50:  #f4f0f8;
+  --color-violet-100: #e6dcf0;
+  --color-violet-200: #d0bfe2;
+  --color-violet-300: #b59dd0;
+  --color-violet-400: #9a7dbc;
+  --color-violet-500: #7a5c9c;
+  --color-violet-600: #684e86;
+  --color-violet-700: #56416e;
+  --color-violet-800: #47365a;
+  --color-violet-900: #3a2c49;
+  --color-violet-950: #e6dcf0;
+
+  /* Apricot, for the third or fourth thing on a chart. */
+  --color-orange-50:  #fdf2e8;
+  --color-orange-100: #f9e2cb;
+  --color-orange-200: #f1c9a1;
+  --color-orange-300: #e5ac76;
+  --color-orange-400: #cb7a31;
+  --color-orange-500: #b57339;
+  --color-orange-600: #945d2e;
+  --color-orange-700: #7d4f28;
+  --color-orange-800: #644021;
+  --color-orange-900: #51341b;
+  --color-orange-950: #f9e2cb;
+
+  /* Blush, used sparingly beside the accent. */
+  --color-rose-50:  #fdeff2;
+  --color-rose-100: #f9dae1;
+  --color-rose-200: #f1bec9;
+  --color-rose-300: #e59dad;
+  --color-rose-400: #d17087;
+  --color-rose-500: #bd5f77;
+  --color-rose-600: #a75067;
+  --color-rose-700: #8a4254;
+  --color-rose-800: #6f3543;
+  --color-rose-900: #5a2c37;
+  --color-rose-950: #f9dae1;
+}
+
+/* The page itself, so the ground is beige before a single component paints. */
+html,
+body {
+  background-color: #f5eee1;
+  color: #000000;
+}
+
 *,
 *::before,
 *::after {
@@ -23,12 +247,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #d9c9ae;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: #8a7f6d;
 }
 
 ::-webkit-scrollbar-corner {
@@ -102,13 +326,13 @@ input[type="date"]::-webkit-inner-spin-button {
 /* Highlight animation for AI Analysis row */
 @keyframes highlight-pulse {
   0% {
-    background-color: rgb(99 102 241 / 0.25);
+    background-color: rgb(172 86 69 / 0.18);
   }
   50% {
-    background-color: rgb(99 102 241 / 0.1);
+    background-color: rgb(172 86 69 / 0.08);
   }
   100% {
-    background-color: rgb(99 102 241 / 0.25);
+    background-color: rgb(172 86 69 / 0.18);
   }
 }
 
@@ -133,6 +357,25 @@ input[type="date"]::-webkit-inner-spin-button {
 .report-sheet,
 .report-sheet * {
   color-scheme: light;
+}
+
+/* A report sheet is paper: white ground, black ink, whatever the portal wears.
+   The palette in lib/reportPalette.js was contrast-validated against white
+   specifically, so the portal's beige must not leak in here. Redefining the
+   tokens on this scope is enough — every utility inside resolves through them. */
+.report-sheet {
+  --color-white: #ffffff;
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  background-color: #ffffff;
 }
 
 .report-sheet {

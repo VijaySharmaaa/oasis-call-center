@@ -12,7 +12,14 @@ export default function ColorSelect({ value, onChange, options, placeholder, col
   }, [open]);
 
   const selected = options.find(o => o.value === value);
-  const displayColor = value && colorMap[value] ? colorMap[value] : 'text-slate-900 dark:text-white';
+  /* An unset filter is not a value — it reads muted, so a row of dropdowns
+     shows at a glance which ones are actually narrowing the list. The old
+     fallback was `text-slate-900 dark:text-white`, which made every placeholder
+     as loud as a selection, and went invisible outright if a `dark` class was
+     left on the page: white resolves to the beige surface these sit on. */
+  const displayColor = value
+    ? (colorMap[value] || 'text-slate-900')
+    : 'text-slate-500';
 
   return (
     <div ref={ref} className="relative">

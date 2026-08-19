@@ -356,7 +356,7 @@ export default function EmailDetailModal({ emailId, onClose, onMarkedUnread }) {
                       onClick={() => setView(v)}
                       className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
                         view === v
-                          ? 'bg-indigo-600 text-white'
+                          ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200'
                           : 'text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800'
                       }`}
                     >

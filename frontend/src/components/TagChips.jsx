@@ -39,7 +39,12 @@ export default function TagChips({ item, max = 2, showSub = false, className = '
           // The primary tag is the issue the candidate led with; the rest are
           // real but secondary, and are toned down to say so.
           title={tag.sub_category && tag.sub_category !== '-' ? `${tag.category} · ${tag.sub_category}` : tag.category}
-          className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap max-w-[180px] truncate ${
+          // A chip carrying its sub-category is roughly twice the text, so it
+          // gets room for it rather than truncating the half that says which
+          // kind of the category this is.
+          className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap truncate ${
+            showSub ? 'max-w-[300px]' : 'max-w-[180px]'
+          } ${
             i === 0
               ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400'
               : 'bg-slate-100 dark:bg-zinc-800 text-slate-600 dark:text-zinc-300'

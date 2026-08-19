@@ -415,10 +415,26 @@ function buildAnalysisFileName(filters = {}) {
 // function the screen uses — so the CSV can never select a different set than
 // the list it was exported from.
 
+/** Resolved or Closed — the same pair the daily report and the list count by. */
+const RESOLVED_TICKET_STATUSES = ['Resolved', 'Closed'];
+
 function buildConversationsPipeline(filter) {
   return [
     { $match: filter },
     { $sort: { last_message_at: -1 } },
+    {
+      // Tickets are keyed by the customer's address, which IS the conversation
+      // id — so resolution joins without a second concept. Whether any of them
+      // is settled is decided in JS below rather than in a pipeline-form
+      // $lookup, which keeps this the plain equality join the export's fake
+      // Mongo can also run.
+      $lookup: {
+        from: 'tickets',
+        localField: '_id',
+        foreignField: 'customer_email',
+        as: 'ticket_docs',
+      },
+    },
     {
       // The rollup mirrors the headline verdict, but language and the model
       // that produced it live only on the analysis record.
@@ -436,6 +452,8 @@ function buildConversationsPipeline(filter) {
 
 function conversationsToCsvRecord(doc) {
   const a = doc.analysis || {};
+  const tickets = doc.ticket_docs || [];
+  const resolved = tickets.some(t => RESOLVED_TICKET_STATUSES.includes(t.status));
   return {
     'Sender Name':      doc.participant_name || '',
     'Sender Email':     doc.participant_email || doc._id || '',
@@ -463,6 +481,10 @@ function conversationsToCsvRecord(doc) {
     'Threads':          (doc.thread_ids || []).length,
     // "Outstanding" is not the same as "never analysed": a chain analysed last
     // week that has had a reply since is outstanding again.
+    // Unresolved covers senders nobody has raised a ticket for: the question is
+    // "is there anything left to do here", and for those the answer is yes.
+    'Resolution':       resolved ? 'Resolved' : 'Unresolved',
+    'Tickets':          tickets.length,
     'Analysis Status':  doc.needs_analysis ? 'Outstanding' : (doc.analysis_status || a.status || ''),
     'Analysed At':      formatDate(doc.analysed_at),
     'Model':            a.model_used || '',
@@ -685,7 +707,7 @@ const EXPORT_TYPES = {
       'First Message', 'Last Message', 'Latest Subject', 'Other Subjects',
       'Category', 'Sub-Category', 'Tags', 'AI Insight', 'Summary', 'Requested Action',
       'Bug Category', 'Bug Description', 'Language', 'Attachments', 'Threads',
-      'Analysis Status', 'Analysed At', 'Model',
+      'Resolution', 'Tickets', 'Analysis Status', 'Analysed At', 'Model',
     ],
     // Async, unlike the call builders: a free-text search has to resolve
     // message bodies to the conversations they belong to before it can filter.

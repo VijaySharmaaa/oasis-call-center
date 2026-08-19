@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   useStats,
+  useCalls,
   useDateRange,
-  initiateCall,
-  pollClick2Call,
+  useAgentMap,
 } from "../hooks/useCalls";
+import Pagination from "../components/Pagination";
 import { useAuth } from "../contexts/AuthContext";
 import PageHeader from "../components/PageHeader";
 import { usePageChrome, usePageRefresh } from "../contexts/PageChromeContext";
@@ -28,22 +29,22 @@ function fmtDate(d) {
 
 const TICKET_COLORS = {
   Open: {
-    ring: "#f59e0b",
+    ring: "#b8832d",
     text: "text-amber-600 dark:text-amber-400",
     dot: "bg-amber-400",
   },
   "In Progress": {
-    ring: "#0ea5e9",
+    ring: "#6091bb",
     text: "text-sky-600 dark:text-sky-400",
     dot: "bg-sky-400",
   },
   Resolved: {
-    ring: "#34d399",
+    ring: "#5e9970",
     text: "text-emerald-600 dark:text-emerald-400",
     dot: "bg-emerald-400",
   },
   Closed: {
-    ring: "#94a3b8",
+    ring: "#8a7f6d",
     text: "text-slate-500 dark:text-zinc-400",
     dot: "bg-slate-400",
   },
@@ -69,7 +70,7 @@ function TicketDonut({ stats }) {
         cy="60"
         r={R}
         fill="none"
-        stroke="#e2e8f0"
+        stroke="#e6dac5"
         strokeWidth="16"
         className="dark:hidden"
       />
@@ -78,7 +79,7 @@ function TicketDonut({ stats }) {
         cy="60"
         r={R}
         fill="none"
-        stroke="#27272a"
+        stroke="#e6dac5"
         strokeWidth="16"
         className="hidden dark:block"
       />
@@ -114,7 +115,7 @@ function TicketDonut({ stats }) {
       >
         {total}
       </text>
-      <text x="60" y="70" textAnchor="middle" fontSize="9" fill="#94a3b8">
+      <text x="60" y="70" textAnchor="middle" fontSize="9" fill="#8a7f6d">
         Tickets
       </text>
     </svg>
@@ -186,17 +187,335 @@ function StatCard({ label, value, rawSeconds, color, icon }) {
   );
 }
 
-export default function Dashboard({ onNavigate }) {
-  const [dialState, setDialState] = useState({}); // { [id]: 'loading'|'success'|'error' }
-  const [calledOut, setCalledOut] = useState(() => {
-    try {
-      const saved = localStorage.getItem("calledOutIds");
-      return saved ? new Set(JSON.parse(saved)) : new Set();
-    } catch {
-      return new Set();
+/**
+ * The two halves of the Dashboard: what came in by phone, and what came in by
+ * mail. They are deliberately the same shape — a headline tile carrying the
+ * counts, then the detail beneath — so the eye can compare the channels rather
+ * than learn two layouts.
+ */
+
+/** One number inside a tile. Small enough to sit four-across in half a page. */
+function TileStat({ label, value, rawSeconds, color }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-zinc-500 font-medium truncate">
+        {label}
+      </p>
+      <p className={`text-xl font-bold tabular-nums ${color}`}>
+        {rawSeconds != null
+          ? <AnimatedNumber value={rawSeconds} format={v => fmtDuration(v)} />
+          : typeof value === "number"
+            ? <AnimatedNumber value={value} />
+            : value}
+      </p>
+    </div>
+  );
+}
+
+const TILE_TONES = {
+  calls: {
+    idle: "bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400",
+    open: "bg-indigo-600 text-white",
+    ring: "hover:border-indigo-300 dark:hover:border-indigo-700",
+  },
+  mail: {
+    idle: "bg-teal-50 dark:bg-teal-950/40 text-teal-600 dark:text-teal-400",
+    open: "bg-teal-600 text-white",
+    ring: "hover:border-teal-300 dark:hover:border-teal-700",
+  },
+};
+
+/**
+ * A channel's headline: an icon, four numbers, and the list behind them.
+ *
+ * The WHOLE card is the control. Half a card that responds to a click teaches
+ * people to hunt for the live part, and the numbers are the thing being asked
+ * about — so pressing any of them opens the rows they summarise. It stays a
+ * div with role=button rather than a real <button> only because the numbers are
+ * paragraphs, which a button may not contain.
+ *
+ * It opens the table in place; it deliberately does not navigate. Leaving the
+ * page to answer "which calls?" loses the range, the other half, and the reason
+ * you asked.
+ */
+function StatTile({ tone, icon, stats, open, onToggle, openLabel, closeLabel, note }) {
+  const colors = TILE_TONES[tone] ?? TILE_TONES.calls;
+
+  function onKeyDown(e) {
+    // Enter and Space are what a button answers to; without this the card is
+    // reachable by keyboard and does nothing.
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggle();
     }
-  });
-  const { token, isAdmin, user } = useAuth();
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      aria-label={open ? closeLabel : openLabel}
+      onClick={onToggle}
+      onKeyDown={onKeyDown}
+      className={`w-full text-left bg-white dark:bg-zinc-900 border rounded-xl p-4 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+        open
+          ? "border-slate-300 dark:border-zinc-700"
+          : `border-slate-200 dark:border-zinc-800 ${colors.ring}`
+      }`}
+    >
+      <div className="flex items-center gap-4">
+        <span
+          className={`shrink-0 w-14 h-14 rounded-xl flex items-center justify-center transition-colors ${
+            open ? colors.open : colors.idle
+          }`}
+        >
+          {icon}
+        </span>
+
+        <div className="grid grid-cols-2 min-[420px]:grid-cols-4 gap-3 flex-1 min-w-0">
+          {stats.map(s => <TileStat key={s.label} {...s} />)}
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <p className="text-xs text-slate-400 dark:text-zinc-500 min-w-0 truncate">{note}</p>
+        <span className="text-xs text-indigo-600 dark:text-indigo-400 shrink-0">
+          {open ? "Hide" : "Show"} list
+        </span>
+      </div>
+    </div>
+  );
+}
+
+const PHONE_ICON = (
+  <svg className="w-6 h-6" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M3.654 1.328a.678.678 0 00-1.015-.063L1.605 2.3c-.483.484-.661 1.169-.45 1.77a17.6 17.6 0 004.168 6.608 17.6 17.6 0 006.608 4.168c.601.211 1.286.033 1.77-.45l1.034-1.034a.678.678 0 00-.063-1.015l-2.307-1.794a.678.678 0 00-.58-.122l-2.19.547a1.745 1.745 0 01-1.657-.459L5.482 8.062a1.745 1.745 0 01-.46-1.657l.548-2.19a.678.678 0 00-.122-.58L3.654 1.328z" />
+  </svg>
+);
+
+const MAIL_ICON = (
+  <svg className="w-6 h-6" viewBox="0 0 20 20" fill="currentColor">
+    <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+    <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+  </svg>
+);
+
+/** Shared chrome for both expandable tables, so they read as one feature. */
+function ListShell({ loading, error, empty, children, footer }) {
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5">
+        <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+      </div>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-8 flex flex-col items-center">
+        <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mb-2" />
+        <p className="text-xs text-slate-400 dark:text-zinc-500">Loading…</p>
+      </div>
+    );
+  }
+  return (
+    <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl overflow-hidden">
+      <div className="overflow-x-auto">{children}</div>
+      {empty}
+      {footer}
+    </div>
+  );
+}
+
+/**
+ * Every call in the selected range.
+ *
+ * Rendered only while open, so the hook inside it does not poll for a list
+ * nobody is looking at. Missed calls carry a red row: on this screen they are
+ * the actionable ones, and colour is what makes them findable in a long list
+ * without reading the status column.
+ */
+function CallListPanel({ token, dateFrom, dateTo, agentMap }) {
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const { calls, total, loading, error } = useCalls({ token, page, pageSize, dateFrom, dateTo });
+
+  return (
+    <ListShell
+      loading={loading && calls.length === 0}
+      error={error && `Could not load the call list: ${error}`}
+      footer={total > pageSize && (
+        <Pagination page={page} pageSize={pageSize} total={total}
+          onPageChange={setPage} onPageSizeChange={setPageSize} />
+      )}
+    >
+      <table className="w-full text-sm min-w-[520px]">
+        <thead>
+          <tr className="bg-slate-100 dark:bg-zinc-900/80 text-slate-500 dark:text-zinc-400 text-left text-xs uppercase tracking-wide">
+            {["Caller", "Receiver", "Time", "Duration", "Status"].map(h => (
+              <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {calls.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-400 dark:text-zinc-500">
+                No calls in this range
+              </td>
+            </tr>
+          ) : (
+            calls.map(call => {
+              const missed = !call.agent_answer_time;
+              return (
+                <tr
+                  key={call.id}
+                  className={`border-t border-slate-100 dark:border-zinc-800/60 transition-colors ${
+                    missed
+                      ? "bg-red-50 dark:bg-red-950/30 hover:bg-red-100 dark:hover:bg-red-950/50"
+                      : "hover:bg-slate-50 dark:hover:bg-zinc-900/50"
+                  }`}
+                >
+                  <td className={`px-3 py-2 tabular-nums font-medium ${
+                    missed ? "text-red-700 dark:text-red-400" : "text-slate-700 dark:text-zinc-300"
+                  }`}>
+                    {call.caller_number || "—"}
+                  </td>
+                  {/* The agent who took it. A missed call was answered by
+                      nobody, so the number that was dialled is all there is. */}
+                  <td className="px-3 py-2 text-slate-600 dark:text-zinc-300 text-xs max-w-[160px] truncate">
+                    {agentMap[call.agent_number] || call.agent_name ||
+                      (missed ? call.called_number : call.agent_number) || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-slate-500 dark:text-zinc-400 text-xs whitespace-nowrap">
+                    {fmtDate(call.call_start_time || call.created_at)}
+                  </td>
+                  <td className="px-3 py-2 text-slate-700 dark:text-zinc-300 tabular-nums text-xs">
+                    {call.duration ? fmtDuration(call.duration) : "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${
+                      missed
+                        ? "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-400"
+                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                    }`}>
+                      {missed ? "Missed" : "Received"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </ListShell>
+  );
+}
+
+/**
+ * Every correspondent in the selected range — the mail twin of the call list.
+ *
+ * One row per person rather than per message, because that is the unit the
+ * mailbox is worked in. Unread rows are tinted amber, the same colour the tile
+ * gives the Unread figure, so the highlight and the number it came from agree.
+ */
+function MailListPanel({ token, dateFrom, dateTo }) {
+  const [state, setState] = useState({ rows: [], total: 0, loading: true, error: "" });
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const params = new URLSearchParams({ limit: "25", offset: "0" });
+    if (dateFrom) params.append("dateFrom", `${dateFrom}T00:00`);
+    if (dateTo) params.append("dateTo", `${dateTo}T23:59`);
+
+    fetch(`${API}/api/emails/conversations?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return;
+        setState({ rows: data.conversations ?? [], total: data.total ?? 0, loading: false, error: "" });
+      })
+      .catch(err => {
+        if (!cancelled) setState(s => ({ ...s, loading: false, error: err.message }));
+      });
+
+    return () => { cancelled = true; };
+  }, [token, dateFrom, dateTo]);
+
+  return (
+    <ListShell
+      loading={state.loading}
+      error={state.error && `Could not load the mail list: ${state.error}`}
+      footer={state.total > state.rows.length && (
+        <p className="px-3 py-2 text-xs text-slate-400 dark:text-zinc-500 border-t border-slate-100 dark:border-zinc-800/60">
+          Showing {state.rows.length} of {state.total} senders
+        </p>
+      )}
+    >
+      <table className="w-full text-sm min-w-[520px]">
+        <thead>
+          <tr className="bg-slate-100 dark:bg-zinc-900/80 text-slate-500 dark:text-zinc-400 text-left text-xs uppercase tracking-wide">
+            {["Sender", "Latest Subject", "Last Activity", "Messages", "Status"].map(h => (
+              <th key={h} className="px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {state.rows.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="px-3 py-8 text-center text-sm text-slate-400 dark:text-zinc-500">
+                No mail in this range
+              </td>
+            </tr>
+          ) : (
+            state.rows.map(c => {
+              const unread = (c.unread_count || 0) > 0;
+              return (
+                <tr
+                  key={c.id}
+                  className={`border-t border-slate-100 dark:border-zinc-800/60 transition-colors ${
+                    unread
+                      ? "bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50"
+                      : "hover:bg-slate-50 dark:hover:bg-zinc-900/50"
+                  }`}
+                >
+                  <td className={`px-3 py-2 max-w-[160px] truncate font-medium ${
+                    unread ? "text-amber-800 dark:text-amber-300" : "text-slate-700 dark:text-zinc-300"
+                  }`} title={c.participant_email}>
+                    {c.participant_name || c.participant_email || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-slate-600 dark:text-zinc-300 text-xs max-w-[200px] truncate">
+                    {c.last_subject || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-slate-500 dark:text-zinc-400 text-xs whitespace-nowrap">
+                    {fmtDate(c.last_message_at)}
+                  </td>
+                  <td className="px-3 py-2 text-slate-700 dark:text-zinc-300 tabular-nums text-xs">
+                    {c.message_count ?? "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium whitespace-nowrap ${
+                      unread
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                        : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                    }`}>
+                      {unread ? `${c.unread_count} unread` : "Read"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+      </table>
+    </ListShell>
+  );
+}
+
+export default function Dashboard({ onNavigate }) {
+  const { token, isAdmin } = useAuth();
   // Lower bound only — no upper ceiling, so today's calls always count.
   const { minDate } = useDateRange(token);
   // Date range and the auto-sync switch come from the common header.
@@ -228,6 +547,47 @@ export default function Dashboard({ onNavigate }) {
   }, [token, effectiveFrom, effectiveTo]);
   useEffect(loadEmailStats, [loadEmailStats]);
   const em = emailStats ?? {};
+
+  // The call list is opened from the tile's icon and is closed by default: it
+  // is the detail behind the four numbers, not a fourth panel competing with
+  // them.
+  const [showCallList, setShowCallList] = useState(false);
+  const [showMailList, setShowMailList] = useState(false);
+
+  /**
+   * The two channels' category counts, added together.
+   *
+   * Calls and mail are categorised from ONE taxonomy, so "Payment & Fee" means
+   * the same thing whichever way it arrived and the two counts add up. Each
+   * endpoint sends its top slice plus a grand total; the slices merge for the
+   * wedges and the totals add for the denominator, so the tail that neither
+   * slice carries still shows up as "Other" rather than silently shrinking the
+   * whole.
+   */
+  const mergedCategories = useMemo(() => {
+    const byCategory = new Map();
+    const add = (category, count) => {
+      if (!category || !count) return;
+      byCategory.set(category, (byCategory.get(category) ?? 0) + count);
+    };
+
+    // The call summary names the field `total`, the mail one `count`.
+    for (const c of s.categoryBreakdown ?? []) add(c.category, c.total);
+    for (const c of em.topCategories ?? []) add(c.category, c.count);
+
+    const items = [...byCategory.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const listed = items.reduce((n, i) => n + i.count, 0);
+    // Falls back to what is on screen when a server predates either total.
+    const total = Math.max((s.categoryTotal ?? 0) + (em.categoryTotal ?? 0), listed);
+
+    return { items, total };
+  }, [s.categoryBreakdown, s.categoryTotal, em.topCategories, em.categoryTotal]);
+  // Names for the Receiver column — the same lookup the Call Report uses, so a
+  // verified agent reads the same on both screens.
+  const agentMap = useAgentMap(token, isAdmin);
 
   // The header's auto-sync switch and refresh button drive the stats reload —
   // both halves of it, since one range governs both.
@@ -282,86 +642,6 @@ export default function Dashboard({ onNavigate }) {
       });
   }, [isAdmin, token]);
 
-  async function handleDial(call) {
-    setDialState((s) => ({ ...s, [call.id]: "loading" }));
-    try {
-      const since = Date.now();
-      const res = await initiateCall(
-        call.caller_number,
-        user?.agent_number,
-        token,
-      );
-      const ok = res.status === "Success" || res.status === "success";
-      if (!ok) {
-        setDialState((s) => ({ ...s, [call.id]: "error" }));
-        setTimeout(
-          () =>
-            setDialState((s) => {
-              const n = { ...s };
-              delete n[call.id];
-              return n;
-            }),
-          3000,
-        );
-        return;
-      }
-      // Hide immediately on successful initiation
-      setCalledOut((prev) => {
-        const next = new Set([...prev, call.id]);
-        try {
-          localStorage.setItem("calledOutIds", JSON.stringify([...next]));
-        } catch {
-          /* ignore */
-        }
-        return next;
-      });
-      setDialState((s) => ({ ...s, [call.id]: "polling" }));
-      pollClick2Call(call.caller_number, since, token, {
-        onConfirmed: () => {
-          // Already hidden — just clear dial state
-          setDialState((s) => {
-            const n = { ...s };
-            delete n[call.id];
-            return n;
-          });
-        },
-        onTimeout: () => {
-          // Call never connected — restore to missed list
-          setCalledOut((prev) => {
-            const next = new Set([...prev]);
-            next.delete(call.id);
-            try {
-              localStorage.setItem("calledOutIds", JSON.stringify([...next]));
-            } catch {
-              /* ignore */
-            }
-            return next;
-          });
-          setDialState((s) => ({ ...s, [call.id]: "error" }));
-          setTimeout(
-            () =>
-              setDialState((s) => {
-                const n = { ...s };
-                delete n[call.id];
-                return n;
-              }),
-            3000,
-          );
-        },
-      });
-    } catch {
-      setDialState((s) => ({ ...s, [call.id]: "error" }));
-      setTimeout(
-        () =>
-          setDialState((s) => {
-            const n = { ...s };
-            delete n[call.id];
-            return n;
-          }),
-        3000,
-      );
-    }
-  }
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
@@ -372,126 +652,126 @@ export default function Dashboard({ onNavigate }) {
       />
 
 
-      {/* Stat Cards */}
-      <div
-        className={`grid grid-cols-2 gap-3 mb-6 ${isAdmin ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}
-      >
-        <StatCard
-          label="Total Calls"
-          value={s.total ?? "—"}
-          color="text-indigo-600 dark:text-indigo-400"
-          icon={<PhoneIcon />}
-        />
-        {isAdmin && (
-          <StatCard
-            label="Received"
-            value={s.received ?? "—"}
-            color="text-emerald-600 dark:text-emerald-400"
-            icon={<CheckIcon />}
-          />
-        )}
-        {isAdmin && (
-          <StatCard
-            label="Missed"
-            value={s.missed ?? "—"}
-            color="text-red-500 dark:text-red-400"
-            icon={<MissedIcon />}
-          />
-        )}
-        {!isAdmin && (
-          <StatCard
-            label="Received"
-            value={s.received ?? "—"}
-            color="text-emerald-600 dark:text-emerald-400"
-            icon={<CheckIcon />}
-          />
-        )}
-        {!isAdmin && (
-          <StatCard
-            label="Avg Duration"
-            rawSeconds={s.avgDuration}
-            color="text-violet-600 dark:text-violet-400"
-            icon={<ClockIcon />}
-          />
-        )}
-        {!isAdmin && (
-          <StatCard
-            label="Open Tickets"
-            value={ticketsLoading ? "…" : agentTickets.length}
-            color="text-amber-600 dark:text-amber-400"
-            icon={<TicketIcon />}
-          />
-        )}
-      </div>
+      {/* Two halves: what came in by phone, and what came in by mail.
+          Equal columns on purpose — the point of the split is that the two
+          channels are read side by side, not one above the other. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6 items-start">
 
-      {/* Mailbox counters — kept in their own labelled row rather than appended
-          to the call cards, because "Total" means a different thing on each
-          side and a single seven-card strip invites reading across them. */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs uppercase tracking-wide font-semibold text-slate-500 dark:text-zinc-500">
-            Mailbox
-          </p>
-          {onNavigate && (
-            <button
-              onClick={() => onNavigate("emails")}
-              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-            >
-              View all →
-            </button>
+        {/* ── Calls ─────────────────────────────────────────────────────── */}
+        <div className="space-y-4 min-w-0">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-wide font-semibold text-slate-500 dark:text-zinc-500">
+              Calls
+            </p>
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate("call-report")}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                View all →
+              </button>
+            )}
+          </div>
+
+          <StatTile
+            tone="calls"
+            icon={PHONE_ICON}
+            open={showCallList}
+            onToggle={() => setShowCallList(o => !o)}
+            openLabel="Show the call list"
+            closeLabel="Hide the call list"
+            note={`${s.recorded ?? 0} with a recording`}
+            stats={[
+              { label: "Total",        value: s.total ?? "—",    color: "text-slate-900 dark:text-zinc-100" },
+              { label: "Received",     value: s.received ?? "—", color: "text-emerald-600 dark:text-emerald-400" },
+              { label: "Missed",       value: s.missed ?? "—",   color: "text-red-500 dark:text-red-400" },
+              { label: "Avg Duration", rawSeconds: s.avgDuration, color: "text-violet-600 dark:text-violet-400" },
+            ]}
+          />
+
+          {/* Mounted only while open: the hook inside polls, and there is no
+              sense polling for a list nobody has asked to see. */}
+          {showCallList && (
+            <CallListPanel
+              token={token}
+              dateFrom={effectiveFrom}
+              dateTo={effectiveTo}
+              agentMap={agentMap}
+            />
           )}
+
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px] overflow-hidden">
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                Call Categories
+              </p>
+              <span className="text-xs text-slate-400 dark:text-zinc-500">by call</span>
+            </div>
+            {/* `total` is the field name on the call stats endpoint, `count`
+                on the mail one — one shape for one component. */}
+            <CategoryBars
+              items={(s.categoryBreakdown ?? []).map(c => ({ category: c.category, count: c.total }))}
+              tone="calls"
+            />
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <StatCard
-            label="Total Emails"
-            value={em.total ?? "—"}
-            color="text-indigo-600 dark:text-indigo-400"
-            icon={<MailIcon />}
+
+        {/* ── Mail ──────────────────────────────────────────────────────── */}
+        <div className="space-y-4 min-w-0">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-wide font-semibold text-slate-500 dark:text-zinc-500">
+              Mail
+            </p>
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate("emails")}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                View all →
+              </button>
+            )}
+          </div>
+
+          <StatTile
+            tone="mail"
+            icon={MAIL_ICON}
+            open={showMailList}
+            onToggle={() => setShowMailList(o => !o)}
+            openLabel="Show the mail list"
+            closeLabel="Hide the mail list"
+            note={
+              em.total > 0
+                ? `${em.conversations ?? 0} sender${em.conversations === 1 ? "" : "s"}` +
+                  (em.awaitingAnalysis > 0 ? ` · ${em.awaitingAnalysis} awaiting AI analysis` : "")
+                : "No mail in this range"
+            }
+            stats={[
+              { label: "Total",   value: em.total ?? "—",   color: "text-slate-900 dark:text-zinc-100" },
+              { label: "Replies", value: em.replies ?? "—", color: "text-sky-600 dark:text-sky-400" },
+              { label: "Unread",  value: em.unread ?? "—",  color: "text-amber-600 dark:text-amber-400" },
+              { label: "Read",    value: em.read ?? "—",    color: "text-emerald-600 dark:text-emerald-400" },
+            ]}
           />
-          <StatCard
-            label="Replies"
-            value={em.replies ?? "—"}
-            color="text-sky-600 dark:text-sky-400"
-            icon={<ReplyIcon />}
-          />
-          <StatCard
-            label="Unread"
-            value={em.unread ?? "—"}
-            color="text-amber-600 dark:text-amber-400"
-            icon={<UnreadIcon />}
-          />
-          <StatCard
-            label="Read"
-            value={em.read ?? "—"}
-            color="text-emerald-600 dark:text-emerald-400"
-            icon={<ReadIcon />}
-          />
-        </div>
-        {/* The three counters partition the mailbox exactly once, which is the
-            only reason they are legible side by side — so say so. */}
-        <p className="mt-2 text-xs text-slate-400 dark:text-zinc-500">
-          {em.total > 0 ? (
-            <>
-              {em.conversations ?? 0} sender{em.conversations === 1 ? "" : "s"} ·
-              replies, unread and read add up to the total
-              {em.awaitingAnalysis > 0 && (
-                <>
-                  {" · "}
-                  <span className="text-amber-600 dark:text-amber-400">
-                    {em.awaitingAnalysis} awaiting AI analysis
-                  </span>
-                </>
-              )}
-            </>
-          ) : (
-            "No mail in this range"
+
+          {showMailList && (
+            <MailListPanel token={token} dateFrom={effectiveFrom} dateTo={effectiveTo} />
           )}
-        </p>
+
+          <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px] overflow-hidden">
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+                Email Categories
+              </p>
+              <span className="text-xs text-slate-400 dark:text-zinc-500">by sender</span>
+            </div>
+            <CategoryBars items={em.topCategories ?? []} tone="mail" />
+          </div>
+        </div>
       </div>
 
       {/* Charts Row */}
       <div
-        className={`grid grid-cols-1 gap-4 mb-6 ${isAdmin ? "lg:grid-cols-3" : "hidden"}`}
+        className={`grid grid-cols-1 gap-4 mb-6 ${isAdmin ? "lg:grid-cols-2" : "hidden"}`}
       >
         {/* Ticket Status donut — admin only */}
         {isAdmin && (
@@ -523,152 +803,25 @@ export default function Dashboard({ onNavigate }) {
           </div>
         )}
 
-        {/* Avg Call Duration with per-agent breakdown — admin only */}
-        {isAdmin && (
-          <div className="lg:col-span-1 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
-                Avg Call Duration
-              </p>
-              <span className="text-2xl font-extrabold text-violet-600 dark:text-violet-400">
-                <AnimatedNumber
-                  value={s.avgDuration}
-                  format={(v) => fmtDuration(v)}
-                />
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 dark:text-zinc-500 mb-2 uppercase tracking-wide">
-              By agent
-            </p>
-            <div className="flex-1 overflow-y-auto space-y-2 max-h-36">
-              {(s.avgDurationByAgent ?? []).length === 0 ? (
-                <p className="text-xs text-slate-400 dark:text-zinc-500 py-2">
-                  No data
-                </p>
-              ) : (
-                (s.avgDurationByAgent ?? []).slice(0, 3).map((a) => {
-                  const max = s.avgDurationByAgent[0]?.avgDuration || 1;
-                  const pct = Math.round((a.avgDuration / max) * 100);
-                  return (
-                    <div key={a.agent_number}>
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="flex items-center gap-1 text-xs text-slate-600 dark:text-zinc-300 truncate">
-                          {a.verified && (
-                            <svg
-                              className="w-3 h-3 text-indigo-500 shrink-0"
-                              viewBox="0 0 16 16"
-                              fill="currentColor"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M8 1a7 7 0 100 14A7 7 0 008 1zm3.28 5.78a.75.75 0 00-1.06-1.06L7 8.94 5.78 7.72a.75.75 0 00-1.06 1.06l1.75 1.75a.75.75 0 001.06 0l3.75-3.75z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                          )}
-                          {a.agent_name}
-                        </span>
-                        <span className="text-xs font-semibold text-violet-600 dark:text-violet-400 shrink-0 ml-2">
-                          <AnimatedNumber
-                            value={a.avgDuration}
-                            format={(v) => fmtDuration(v)}
-                            duration={800}
-                          />
-                        </span>
-                      </div>
-                      <div className="h-1.5 bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-violet-400 dark:bg-violet-500 rounded-full animate-bar"
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        )}
+        {/* Beside the donut on purpose: both are circular, both are read as
+            shares of one whole, and this row had a half standing empty.
 
-        {/* Today summary — admin only */}
+            The bar list in each channel ranks its own categories; this answers
+            what neither can — how the work divides across everything that came
+            in, by phone and by mail together. They share one taxonomy, so the
+            sum is meaningful. Admin-only, as this panel has always been. */}
         {isAdmin && (
-          <div className="lg:col-span-1 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col">
-            <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200 mb-3">
-              Received by Agent
-            </p>
-            <div className="flex-1 overflow-y-auto space-y-1.5 max-h-44">
-              {(s.todayByAgent ?? []).length === 0 ? (
-                <p className="text-xs text-slate-400 dark:text-zinc-500 py-2">
-                  No received calls
-                </p>
-              ) : (
-                (s.todayByAgent ?? []).slice(0, 4).map((a) => (
-                  <div
-                    key={a.agent_number}
-                    className="flex items-center justify-between gap-2 py-1 border-b border-slate-50 dark:border-zinc-800/50 last:border-0"
-                  >
-                    <span className="flex items-center gap-1 text-xs text-slate-600 dark:text-zinc-300 truncate">
-                      {a.verified && (
-                        <svg
-                          className="w-3 h-3 text-indigo-500 shrink-0"
-                          viewBox="0 0 16 16"
-                          fill="currentColor"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M8 1a7 7 0 100 14A7 7 0 008 1zm3.28 5.78a.75.75 0 00-1.06-1.06L7 8.94 5.78 7.72a.75.75 0 00-1.06 1.06l1.75 1.75a.75.75 0 001.06 0l3.75-3.75z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      )}
-                      {a.agent_name}
-                    </span>
-                    <span className="text-sm font-bold text-emerald-600 dark:text-emerald-400 shrink-0 tabular-nums">
-                      {a.count}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          <AICategoryPie
+            items={mergedCategories.items}
+            total={mergedCategories.total}
+            onNavigate={onNavigate}
+          />
         )}
       </div>
 
-      {/* Bottom two-panel grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Latest Missed Calls */}
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px]">
-          <div className="flex items-center justify-between mb-4 shrink-0">
-            <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
-              Latest Missed Calls
-            </p>
-            {onNavigate && (
-              <button
-                onClick={() => onNavigate("call-report")}
-                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-              >
-                View all →
-              </button>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            {(s.latestMissed ?? []).filter((c) => !calledOut.has(c.id)).length >
-            0 ? (
-              <LatestMissedTable
-                calls={(s.latestMissed ?? []).filter(
-                  (c) => !calledOut.has(c.id),
-                )}
-                dialState={dialState}
-                onDial={handleDial}
-              />
-            ) : (
-              <p className="text-sm text-slate-400 dark:text-zinc-500 py-4 text-center">
-                No missed calls
-              </p>
-            )}
-          </div>
-        </div>
-
+      {/* Neither channel: bugs the AI found across the calls, or the agent's
+          own ticket queue. It sits below the split rather than inside a half. */}
+      <div className="space-y-4">
         {/* AI Insights & Bugs (admin) / My Tickets (agent) */}
         <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px] overflow-hidden">
           {isAdmin ? (
@@ -710,100 +863,37 @@ export default function Dashboard({ onNavigate }) {
             </>
           )}
         </div>
-      </div>
 
-      {/* Mailbox panels — the email twin of the row above: who is still
-          waiting, and what they are writing about. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px]">
-          <div className="flex items-center justify-between mb-4 shrink-0">
-            <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
-              Unread Senders
-            </p>
-            {onNavigate && (
-              <button
-                onClick={() => onNavigate("emails")}
-                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
-              >
-                View all →
-              </button>
-            )}
-          </div>
-          <UnreadSendersList
-            senders={em.latestUnread ?? []}
-            onOpen={onNavigate ? () => onNavigate("emails") : undefined}
-          />
-        </div>
-
-        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px] overflow-hidden">
-          <div className="flex items-center justify-between mb-4 shrink-0">
-            <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
-              Email Categories
-            </p>
-            <span className="text-xs text-slate-400 dark:text-zinc-500">
-              by sender
-            </span>
-          </div>
-          <EmailCategoryList items={em.topCategories ?? []} />
-        </div>
       </div>
     </div>
   );
 }
 
-/**
- * Who has written and not been picked up yet — the mailbox's answer to Latest
- * Missed Calls. One row per sender, not per message: the unit somebody picks up
- * in a shared mailbox is the person.
- */
-function UnreadSendersList({ senders, onOpen }) {
-  if (!senders.length)
-    return (
-      <p className="text-sm text-slate-400 dark:text-zinc-500 py-4 text-center flex-1">
-        Nothing unread
-      </p>
-    );
-  return (
-    <div className="flex-1 overflow-y-auto space-y-2">
-      {senders.map((c) => (
-        <div
-          key={c.id}
-          onClick={onOpen}
-          className={`flex items-start justify-between gap-3 pb-2 border-b border-slate-50 dark:border-zinc-800/50 last:border-0 ${
-            onOpen ? "cursor-pointer" : ""
-          }`}
-        >
-          <div className="min-w-0">
-            <p className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-zinc-200 truncate">
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
-              {c.participant_name || c.participant_email || "—"}
-            </p>
-            <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 truncate">
-              {c.last_subject || "—"}
-            </p>
-          </div>
-          <div className="shrink-0 text-right">
-            <span className="text-xs font-bold text-amber-600 dark:text-amber-400 tabular-nums">
-              {c.unread_count}
-            </span>
-            <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 whitespace-nowrap">
-              {fmtDate(c.last_message_at)}
-            </p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 /** What the mailbox is about, counted per sender rather than per message. */
-function EmailCategoryList({ items }) {
+/**
+ * What a channel is about, as a bar per category.
+ *
+ * Shared by both halves rather than written twice: the two lists answer the
+ * same question of different traffic, and a reader comparing them should not
+ * have to work out whether a difference in the drawing means a difference in
+ * the data. The tone is the only thing that varies, matching each half's tile.
+ */
+const CATEGORY_TONES = {
+  calls: { label: 'text-indigo-600 dark:text-indigo-400', bar: 'bg-indigo-400 dark:bg-indigo-500' },
+  mail:  { label: 'text-teal-600 dark:text-teal-400',     bar: 'bg-teal-400 dark:bg-teal-500' },
+};
+
+function CategoryBars({ items, tone = 'mail', empty = 'Nothing analysed yet' }) {
   if (!items.length)
     return (
       <p className="text-sm text-slate-400 dark:text-zinc-500 py-4 text-center flex-1">
-        Nothing analysed yet
+        {empty}
       </p>
     );
+  const colors = CATEGORY_TONES[tone] ?? CATEGORY_TONES.mail;
+  // Scaled against the largest, so the bars compare within a panel rather than
+  // across two panels counting different things.
   const maxCount = items[0]?.count || 1;
   return (
     <div className="flex-1 overflow-y-auto space-y-4">
@@ -815,7 +905,7 @@ function EmailCategoryList({ items }) {
         >
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 truncate">
+              <span className={`text-xs font-medium truncate ${colors.label}`} title={item.category}>
                 {item.category}
               </span>
               <span className="text-xs font-bold text-slate-700 dark:text-zinc-200 shrink-0 ml-2">
@@ -824,7 +914,7 @@ function EmailCategoryList({ items }) {
             </div>
             <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-zinc-800">
               <div
-                className="h-full rounded-full bg-indigo-400 dark:bg-indigo-500 animate-bar"
+                className={`h-full rounded-full animate-bar ${colors.bar}`}
                 style={{
                   width: `${Math.round((item.count / maxCount) * 100)}%`,
                   animationDelay: `${i * 50 + 100}ms`,
@@ -922,155 +1012,6 @@ function DurationBar({ label, value, color, max }) {
   );
 }
 
-function LatestMissedTable({ calls, dialState, onDial }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-slate-100 dark:border-zinc-800">
-            {["Caller", "Called", "Time", "Duration", ""].map((h) => (
-              <th
-                key={h}
-                className="pb-2 pr-4 text-left text-xs font-medium text-slate-400 dark:text-zinc-500 uppercase tracking-wide whitespace-nowrap"
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {calls.map((call) => {
-            const state = dialState[call.id];
-            return (
-              <tr
-                key={call.id}
-                className="border-b border-slate-50 dark:border-zinc-800/50 last:border-0"
-              >
-                <td className="py-2.5 pr-4 text-slate-700 dark:text-zinc-300 tabular-nums whitespace-nowrap">
-                  {call.caller_number || "—"}
-                </td>
-                <td className="py-2.5 pr-4 text-slate-700 dark:text-zinc-300 tabular-nums whitespace-nowrap">
-                  {call.called_number || "—"}
-                </td>
-                <td className="py-2.5 pr-4 text-slate-500 dark:text-zinc-400 whitespace-nowrap text-xs">
-                  {fmtDate(call.call_start_time || call.created_at)}
-                </td>
-                <td className="py-2.5 pr-4 text-slate-700 dark:text-zinc-300 tabular-nums whitespace-nowrap">
-                  {call.duration ? fmtDuration(call.duration) : "—"}
-                </td>
-                <td className="py-2.5">
-                  <button
-                    onClick={() => onDial(call)}
-                    disabled={state === "loading" || state === "polling"}
-                    title={
-                      state === "polling"
-                        ? "Waiting for confirmation…"
-                        : state === "connected"
-                          ? "Call connected!"
-                          : state === "initiated"
-                            ? "Call initiated (no webhook yet)"
-                            : `Call back ${call.caller_number}`
-                    }
-                    className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors ${
-                      state === "connected"
-                        ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400"
-                        : state === "initiated"
-                          ? "bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400"
-                          : state === "error"
-                            ? "bg-red-100 dark:bg-red-900/30 text-red-500 dark:text-red-400"
-                            : state === "loading" || state === "polling"
-                              ? "text-slate-300 dark:text-zinc-600 cursor-wait"
-                              : "text-slate-400 dark:text-zinc-500 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 hover:text-indigo-600 dark:hover:text-indigo-400"
-                    }`}
-                  >
-                    {state === "loading" ? (
-                      <svg
-                        className="w-3.5 h-3.5 animate-spin"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                      >
-                        <circle
-                          cx="8"
-                          cy="8"
-                          r="6"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeDasharray="25"
-                          strokeDashoffset="6"
-                        />
-                      </svg>
-                    ) : state === "polling" ? (
-                      <svg
-                        className="w-3.5 h-3.5 animate-pulse"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <circle cx="8" cy="8" r="2" />
-                        <path d="M4 8a4 4 0 008 0M2 8a6 6 0 0012 0" />
-                      </svg>
-                    ) : state === "connected" ? (
-                      <svg
-                        className="w-3.5 h-3.5"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M3 8l3 3 7-7" />
-                      </svg>
-                    ) : state === "initiated" ? (
-                      <svg
-                        className="w-3.5 h-3.5"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <circle cx="8" cy="8" r="6" />
-                        <path d="M8 5v3M8 11h.01" />
-                      </svg>
-                    ) : state === "error" ? (
-                      <svg
-                        className="w-3.5 h-3.5"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                      >
-                        <path d="M4 4l8 8M12 4l-8 8" />
-                      </svg>
-                    ) : (
-                      <svg
-                        className="w-3.5 h-3.5"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M2 3.5A1.5 1.5 0 013.5 2h.879a1 1 0 01.958.713l.66 2.2a1 1 0 01-.23 1.002L4.5 6.5s1 2 5 5l1.085-1.267a1 1 0 011.003-.23l2.2.66A1 1 0 0114 11.62V12.5A1.5 1.5 0 0112.5 14C6.7 14 2 9.3 2 3.5z" />
-                      </svg>
-                    )}
-                  </button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
 
 function TopBugsList({ items }) {
   if (!items.length)
@@ -1109,6 +1050,187 @@ function TopBugsList({ items }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ── AI category mix ──────────────────────────────────────────────────────
+   The slots below are the validated categorical palette — light step first,
+   dark step second — written as whole class strings so Tailwind's scanner sees
+   them. Their ORDER is the colour-blind-safety mechanism rather than a taste
+   call: this sequence is the one that clears the adjacent-pair separation gates
+   in both modes, including the wrap from the last wedge back to the first. So
+   slots are handed out in order and never cycled. Past five categories the tail
+   folds into `Other`, which is deliberately neutral: grey reads as a residual,
+   where a sixth hue would read as one more identity. */
+/* Softened to pastel for the beige portal — HUE HELD EXACTLY, chroma and
+   lightness moved, so the ordering above still means what it says. The change
+   was measured, not eyeballed (scripts/check-contrast.mjs re-runs it):
+
+     adjacent ΔE   min 32.6 → 25.8   still far above confusable
+     ΔE vs card    min 60.6 → 35.4   no wedge sinks into the beige
+
+   The tightest pair is the same one it always was (the violet→blue wrap), so
+   softening did not introduce a new constraint, it scaled the existing margin.
+   Each wedge also carries its label, count and percentage in the legend beside
+   it, which is the secondary encoding this palette's notes have always relied
+   on. Re-measure before touching a hex. */
+const AI_PIE_SLOTS = [
+  { fill: 'fill-[#7ba0cd] dark:fill-[#7ba0cd]', dot: 'bg-[#7ba0cd] dark:bg-[#7ba0cd]' },
+  { fill: 'fill-[#dca18a] dark:fill-[#dca18a]', dot: 'bg-[#dca18a] dark:bg-[#dca18a]' },
+  { fill: 'fill-[#4fc299] dark:fill-[#4fc299]', dot: 'bg-[#4fc299] dark:bg-[#4fc299]' },
+  { fill: 'fill-[#ddb258] dark:fill-[#ddb258]', dot: 'bg-[#ddb258] dark:bg-[#ddb258]' },
+  { fill: 'fill-[#7c72b6] dark:fill-[#7c72b6]', dot: 'bg-[#7c72b6] dark:bg-[#7c72b6]' },
+];
+const AI_PIE_OTHER = { fill: 'fill-[#a8a8a5]', dot: 'bg-[#a8a8a5]' };
+
+/** A wedge from `from` to `to`, in radians clockwise from twelve o'clock. */
+function wedgePath(cx, cy, r, from, to) {
+  const point = a => [cx + r * Math.sin(a), cy - r * Math.cos(a)];
+  const [x1, y1] = point(from);
+  const [x2, y2] = point(to);
+  const large = to - from > Math.PI ? 1 : 0;
+  return `M ${cx} ${cy} L ${x1.toFixed(3)} ${y1.toFixed(3)} `
+       + `A ${r} ${r} 0 ${large} 1 ${x2.toFixed(3)} ${y2.toFixed(3)} Z`;
+}
+
+/** One decimal below 10%, whole numbers above — a pie is read at a glance. */
+function fmtPct(n) {
+  return `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`;
+}
+
+/**
+ * How the categories divide the whole, as a share each — calls and mail
+ * together, since both are drawn from one taxonomy.
+ *
+ * The bar list in each half ranks its own channel; this answers the other half of the
+ * question — whether the leader is most of the traffic or merely first among
+ * many. `total` is every categorised issue, not just the ten the list carries,
+ * so the shares are shares of something a reader would recognise as the whole
+ * rather than of an arbitrary top slice.
+ *
+ * One row per (call, tag): a call raising two issues counts in both, so the
+ * whole here is the number of ISSUES, not of calls.
+ */
+function AICategoryPie({ items, total, onNavigate }) {
+  const [active, setActive] = useState(null);
+
+  const listed = items.reduce((n, i) => n + i.count, 0);
+  // Older servers do not send the grand total; what is on screen is then the
+  // best whole available, and it is at least self-consistent.
+  const denom = Math.max(total ?? 0, listed);
+
+  const top = items.slice(0, AI_PIE_SLOTS.length);
+  const rest = denom - top.reduce((n, i) => n + i.count, 0);
+  const slices = [
+    ...top.map((it, i) => ({ ...it, ...AI_PIE_SLOTS[i] })),
+    ...(rest > 0 ? [{ category: 'Other', count: rest, ...AI_PIE_OTHER }] : []),
+  ];
+
+  let angle = 0;
+  const wedges = slices.map(sl => {
+    const from = angle;
+    angle += (sl.count / denom) * 2 * Math.PI;
+    return { ...sl, from, to: angle, pct: (sl.count / denom) * 100 };
+  });
+
+  const shown = active === null ? null : wedges[active];
+
+  return (
+    <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200 shrink-0">
+          Category Mix
+        </p>
+        <span className="text-xs text-slate-400 dark:text-zinc-500 truncate">
+          {shown
+            ? `${shown.category} · ${shown.count} of ${denom}`
+            : `${denom} categorised issue${denom === 1 ? '' : 's'}`}
+        </span>
+        {onNavigate && (
+          <button
+            onClick={() => onNavigate('ai-analysis')}
+            className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline shrink-0"
+          >
+            View All →
+          </button>
+        )}
+      </div>
+
+      {!denom || !wedges.length ? (
+        <p className="text-sm text-slate-400 dark:text-zinc-500 py-8 text-center">
+          No categories identified yet
+        </p>
+      ) : (
+        <div className="flex flex-col sm:flex-row items-center gap-6">
+          <svg
+            viewBox="0 0 200 200"
+            className="w-40 h-40 sm:w-44 sm:h-44 shrink-0"
+            role="img"
+            aria-label={`Share of AI-identified categories: ${wedges
+              .map(w => `${w.category} ${fmtPct(w.pct)}`)
+              .join(', ')}`}
+          >
+            {/* A lone category is a full turn, and a full-turn arc has the same
+                start and end point — it would draw nothing. */}
+            {wedges.length === 1 ? (
+              <circle
+                cx="100"
+                cy="100"
+                r="88"
+                strokeWidth="2"
+                className={`${wedges[0].fill} stroke-white dark:stroke-zinc-900`}
+              />
+            ) : (
+              wedges.map((w, i) => (
+                <path
+                  key={w.category}
+                  d={wedgePath(100, 100, 88, w.from, w.to)}
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                  opacity={active === null || active === i ? 1 : 0.3}
+                  className={`${w.fill} stroke-white dark:stroke-zinc-900 transition-opacity duration-150`}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseLeave={() => setActive(null)}
+                >
+                  <title>{`${w.category} — ${w.count} (${fmtPct(w.pct)})`}</title>
+                </path>
+              ))
+            )}
+          </svg>
+
+          {/* Three of the fills sit under 3:1 against the beige card ground, so
+              the shares are spelled out here rather than left to the wedge
+              alone. Width-capped: stretched across a full-width card the counts
+              drift so far from the names they stop reading as one row. */}
+          <ul className="min-w-0 w-full sm:max-w-md space-y-1">
+            {wedges.map((w, i) => (
+              <li
+                key={w.category}
+                onMouseEnter={() => setActive(i)}
+                onMouseLeave={() => setActive(null)}
+                className={`flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors ${
+                  active === i ? 'bg-slate-50 dark:bg-zinc-800/60' : ''
+                }`}
+              >
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${w.dot}`} />
+                <span
+                  className="flex-1 min-w-0 truncate text-xs font-medium text-slate-600 dark:text-zinc-300"
+                  title={w.category}
+                >
+                  {w.category}
+                </span>
+                <span className="text-xs text-slate-400 dark:text-zinc-500 shrink-0 tabular-nums">
+                  {w.count}
+                </span>
+                <span className="w-12 text-right text-xs font-bold text-slate-700 dark:text-zinc-200 shrink-0 tabular-nums">
+                  {fmtPct(w.pct)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

@@ -96,7 +96,7 @@ export default function PageHeader({ title, subtitle, showFilters = true, minDat
                 onClick={() => setPreset(p.id)}
                 className={`px-3 py-1.5 text-xs font-medium transition-colors border-r last:border-r-0 border-slate-300 dark:border-zinc-700 ${
                   preset === p.id
-                    ? 'bg-indigo-600 text-white'
+                    ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-200'
                     : 'text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800'
                 }`}
               >

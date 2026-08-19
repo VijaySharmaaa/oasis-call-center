@@ -69,11 +69,15 @@ function lastListQuery(fetchMock) {
   return new URL(String(call[0]), 'http://localhost').searchParams;
 }
 
-/** Open a dropdown by its current label and choose an option. */
-async function choose(currentLabel, optionLabel) {
-  await userEvent.click(screen.getByRole('button', { name: currentLabel }));
-  const options = await screen.findAllByRole('button', { name: optionLabel });
-  await userEvent.click(options[options.length - 1]);
+/**
+ * Set a filter the way an operator now has to: open the ⋯ menu, say WHICH
+ * filter, then pick the value. Two steps rather than one, which is the whole
+ * trade the compact bar makes.
+ */
+async function choose(filterName, optionLabel) {
+  await userEvent.click(screen.getByRole('button', { name: 'Filters' }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: new RegExp(`^${filterName}`) }));
+  await userEvent.click(await screen.findByRole('menuitem', { name: optionLabel }));
 }
 
 let fetchMock;
@@ -112,10 +116,10 @@ describe('read state', () => {
 
 describe('reply state', () => {
   it('asks whether anyone has written back', async () => {
-    await choose('Any Reply State', 'Replied');
+    await choose('Reply State', 'Replied');
     await waitFor(() => expect(lastListQuery(fetchMock).get('replied')).toBe('true'));
 
-    await choose('Replied', 'Not Replied');
+    await choose('Reply State', 'Not Replied');
     await waitFor(() => expect(lastListQuery(fetchMock).get('replied')).toBe('false'));
   });
 });
@@ -131,8 +135,90 @@ describe('analysis state', () => {
     ['Analysing',    'processing'],
     ['Failed',       'failed'],
   ])('sends %s as analysisStatus=%s', async (label, value) => {
-    await choose('Any Analysis', label);
+    await choose('Analysis', label);
     await waitFor(() => expect(lastListQuery(fetchMock).get('analysisStatus')).toBe(value));
+  });
+});
+
+describe('the compact filter menu', () => {
+  const openMenu = () => userEvent.click(screen.getByRole('button', { name: 'Filters' }));
+
+  it('costs one button rather than a control per dimension', async () => {
+    // The four dropdowns used to sit in the bar announcing that they were set
+    // to nothing. Their options exist only once somebody asks for them.
+    expect(screen.queryByText('Any Reply State')).not.toBeInTheDocument();
+    expect(screen.queryByText('Any Analysis')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Filters' })).toBeInTheDocument();
+
+    await openMenu();
+    for (const name of ['Reply State', 'Analysis', 'Content', 'Category']) {
+      expect(await screen.findByRole('menuitem', { name: new RegExp(`^${name}`) })).toBeInTheDocument();
+    }
+  });
+
+  it('shows a filter’s own options only after that filter is picked', async () => {
+    await openMenu();
+    expect(screen.queryByRole('menuitem', { name: 'Replied' })).not.toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Reply State/ }));
+
+    expect(await screen.findByRole('menuitem', { name: 'Replied' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Not Replied' })).toBeInTheDocument();
+  });
+
+  it('goes back to the list of filters without applying anything', async () => {
+    await openMenu();
+    await userEvent.click(await screen.findByRole('menuitem', { name: /^Reply State/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Reply State' }));
+
+    expect(await screen.findByRole('menuitem', { name: /^Analysis/ })).toBeInTheDocument();
+    await waitFor(() => expect(lastListQuery(fetchMock).get('replied')).toBeNull());
+  });
+
+  /**
+   * The one thing a compact bar must not do. A filter folded behind a button is
+   * a filter you forget you set, and then the table is quietly lying about how
+   * much mail there is — so what IS set stays on screen.
+   */
+  it('brings a set filter back out as a chip', async () => {
+    await choose('Reply State', 'Replied');
+
+    const chip = await screen.findByRole('button', { name: 'Replied' });
+    expect(chip).toHaveAttribute('title', expect.stringContaining('Reply State'));
+  });
+
+  it('clears that one filter from its chip, leaving the others alone', async () => {
+    await choose('Reply State', 'Replied');
+    await choose('Analysis', 'Failed');
+    await waitFor(() => expect(lastListQuery(fetchMock).get('replied')).toBe('true'));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Replied' }));
+
+    await waitFor(() => {
+      const qs = lastListQuery(fetchMock);
+      expect(qs.get('replied')).toBeNull();
+      expect(qs.get('analysisStatus')).toBe('failed');   // untouched
+    });
+  });
+
+  it('remembers what is set when the menu is reopened', async () => {
+    await choose('Analysis', 'Failed');
+    await openMenu();
+
+    // The row for a set filter says so, so the menu doubles as the answer to
+    // "what is narrowing this list right now".
+    expect(await screen.findByRole('menuitem', { name: 'Analysis: Failed' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Reply State: Any' })).toBeInTheDocument();
+  });
+
+  it('shuts on Escape', async () => {
+    await openMenu();
+    expect(await screen.findByRole('menuitem', { name: /^Analysis/ })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() =>
+      expect(screen.queryByRole('menuitem', { name: /^Analysis/ })).not.toBeInTheDocument());
   });
 });
 
@@ -147,8 +233,8 @@ describe('clearing', () => {
 
   it('drops every filter the page owns in one go', async () => {
     await userEvent.click(screen.getByRole('button', { name: 'Unread' }));
-    await choose('Any Reply State', 'Replied');
-    await choose('Any Analysis', 'Failed');
+    await choose('Reply State', 'Replied');
+    await choose('Analysis', 'Failed');
 
     await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
 

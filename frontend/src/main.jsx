@@ -9,6 +9,14 @@ document.addEventListener('click', e => {
   }
 });
 
+/**
+ * The portal has one look. Anything that still says `dark:` is inert — but only
+ * while the class is genuinely gone, and a class already on the element outlives
+ * the code that put it there. Strip it once, at boot, so a stale one from an
+ * older session cannot half-invert the page.
+ */
+document.documentElement.classList.remove('dark');
+
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'

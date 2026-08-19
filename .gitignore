@@ -39,3 +39,11 @@ test-results/
 *.vsix
 
 Temp/
+# Playwright screenshots: regenerated on demand, never reviewed as text.
+# Leading **/ matters: a pattern containing a slash is anchored to THIS file's
+# directory, so a bare `visual/screens/` would have ignored a folder at the repo
+# root and quietly committed 700KB of PNGs from frontend/visual/screens/.
+**/visual/screens/
+**/visual/.artifacts/
+**/playwright-report/
+**/test-results/
