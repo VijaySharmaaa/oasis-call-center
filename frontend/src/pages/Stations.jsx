@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import * as XLSX from "xlsx";
+import PageHeader from "../components/PageHeader";
+import { usePageRefresh } from "../contexts/PageChromeContext";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -33,6 +35,9 @@ export default function Stations() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Rosters change rarely, so this polls far slower than the call pages.
+  usePageRefresh(load, 30000);
 
   const filtered = stations.filter((s) => {
     if (dateFilter && s.date !== dateFilter) return false;
@@ -114,13 +119,14 @@ export default function Stations() {
         />
       )}
 
-      {/* Header */}
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Stations</h1>
-        <p className="text-sm text-slate-500 dark:text-zinc-500 mt-0.5">
-          {filtered.length} of {stations.length} stations
-        </p>
-      </div>
+      {/* Stations keep their own single-day picker below — it selects which
+          day's roster to show, which is a different thing from the range
+          filter the header offers, so the header's is hidden. */}
+      <PageHeader
+        title="Stations"
+        showFilters={false}
+        subtitle={`${filtered.length} of ${stations.length} stations`}
+      />
 
       {/* Search + Actions row */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">

@@ -238,6 +238,89 @@ describe('incremental phase', () => {
   });
 });
 
+describe('read state coming back from Gmail', () => {
+  /* Unread means "unread in Gmail AND not opened here". Somebody who marks a
+     mail unread in Gmail is deliberately putting it back in the pile, and our
+     own read marker used to outvote them — the card stayed read however many
+     times they tried. */
+  it('clears our read marker when Gmail marks a message unread again', async () => {
+    await completeBackfill();
+    await mockFake.db.collection('emails').updateOne(
+      { gmail_id: 'a1' },
+      { $set: { read_at: new Date('2026-08-18T10:00:00Z'), read_by: 'Admin', is_unread: false } }
+    );
+
+    mockGmail.listHistory.mockResolvedValue({
+      historyId: '1300',
+      history: [{ labelsAdded: [{ message: { id: 'a1' }, labelIds: ['UNREAD'] }] }],
+    });
+    await syncOnce();
+
+    expect(email('a1').is_unread).toBe(true);
+    expect('read_at' in email('a1')).toBe(false);
+    expect('read_by' in email('a1')).toBe(false);
+    // And the chain says so, so the card shows the dot again.
+    expect(mockFake.store.email_conversations.get('aasha@example.com').unread_count).toBeGreaterThan(0);
+  });
+
+  it('leaves the marker alone when Gmail changes some other label', async () => {
+    await completeBackfill();
+    await mockFake.db.collection('emails').updateOne(
+      { gmail_id: 'a1' }, { $set: { read_at: new Date('2026-08-18T10:00:00Z'), read_by: 'Admin' } }
+    );
+
+    mockGmail.listHistory.mockResolvedValue({
+      historyId: '1300',
+      history: [{ labelsAdded: [{ message: { id: 'a1' }, labelIds: ['STARRED'] }] }],
+    });
+    await syncOnce();
+
+    expect(email('a1').read_at).toBeInstanceOf(Date);
+    expect(email('a1').read_by).toBe('Admin');
+  });
+});
+
+describe('conversations', () => {
+  it('groups stored mail by correspondent as it syncs', async () => {
+    await completeBackfill();
+
+    const conversation = mockFake.store.email_conversations.get('aasha@example.com');
+    expect(conversation).toMatchObject({
+      participant_email: 'aasha@example.com',
+      participant_name: 'Aasha',
+      message_count: 3,
+      inbound_count: 3,
+      unread_count: 3,
+      needs_analysis: true,
+    });
+    expect(email('a1').conversation_id).toBe('aasha@example.com');
+  });
+
+  /* Grouping mail by who sent it is not an AI feature. On a deployment with no
+     Gemini key the analysis worker never runs, and if its sweep were the only
+     thing that built rollups the Emails tab would be permanently empty. */
+  it('backfills mail that predates conversations, without the analysis worker', async () => {
+    mockFake = createFakeDb({
+      emails: [{ ...fakeMessage('old1'), mailbox: 'support@upessc.org', is_deleted: false }],
+    });
+    mockGmail.listMessages.mockResolvedValue({ messages: [], nextPageToken: undefined });
+
+    await syncOnce();
+
+    expect(email('old1').conversation_id).toBe('aasha@example.com');
+    expect(mockFake.store.email_conversations.get('aasha@example.com')).toMatchObject({ message_count: 1 });
+  });
+
+  it('keeps the rollup honest when Gmail trashes a message', async () => {
+    await completeBackfill();
+    await syncOnce();   // the history page deletes a3 and adds n1
+
+    const conversation = mockFake.store.email_conversations.get('aasha@example.com');
+    expect(conversation.message_count).toBe(3);   // a1, a2, n1 — a3 is gone
+    expect(conversation.unread_count).toBe(2);    // a1 lost its UNREAD label
+  });
+});
+
 describe('guards', () => {
   it('does nothing when Gmail is not configured', async () => {
     mockGmail.isConfigured.mockReturnValue(false);

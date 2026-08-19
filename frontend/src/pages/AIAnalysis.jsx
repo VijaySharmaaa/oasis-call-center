@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef, forwardRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useDateRange, useAgentMap } from '../hooks/useCalls';
+import PageHeader from '../components/PageHeader';
+import StatusTabs from '../components/StatusTabs';
+import { usePageChrome, usePageRefresh } from '../contexts/PageChromeContext';
 import { useExportJob } from '../hooks/useExportJob';
 import TranscriptionModal from '../components/TranscriptionModal';
 import AudioPlayer from '../components/AudioPlayer';
@@ -21,6 +24,45 @@ function formatDuration(sec) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
+/**
+ * Which queue's verdicts to read. Two workers produce them — one reads
+ * recordings, one reads correspondence — but a verdict has the same shape
+ * either way, so they list together and this narrows to one when an operator
+ * wants only one.
+ */
+const SOURCE_TABS = [
+  { value: 'all',    label: 'All',    bg: ['#ffffff', '#3f3f46'],             text: 'text-slate-900 dark:text-zinc-100' },
+  { value: 'calls',  label: 'Calls',  bg: ['#e0e7ff', 'rgba(49,46,129,0.5)'], text: 'text-indigo-700 dark:text-indigo-400' },
+  { value: 'emails', label: 'Emails', bg: ['#ccfbf1', 'rgba(19,78,74,0.5)'],  text: 'text-teal-700 dark:text-teal-400' },
+];
+
+/** The one-glance marker for which queue a row came from. */
+function SourceBadge({ source }) {
+  const isEmail = source === 'email';
+  return (
+    <span
+      title={isEmail ? 'Analysed from a correspondence' : 'Analysed from a recording'}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${
+        isEmail
+          ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-400'
+          : 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400'
+      }`}
+    >
+      {isEmail ? (
+        <svg className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z"/>
+          <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/>
+        </svg>
+      ) : (
+        <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M3.654 1.328a.678.678 0 00-1.015-.063L1.605 2.3c-.483.484-.661 1.169-.45 1.77a17.6 17.6 0 004.168 6.608 17.6 17.6 0 006.608 4.168c.601.211 1.286.033 1.77-.45l1.034-1.034a.678.678 0 00-.063-1.015l-2.307-1.794a.678.678 0 00-.58-.122l-2.19.547a1.745 1.745 0 01-1.657-.459L5.482 8.062a1.745 1.745 0 01-.46-1.657l.548-2.19a.678.678 0 00-.122-.58L3.654 1.328z"/>
+        </svg>
+      )}
+      {isEmail ? 'Email' : 'Call'}
+    </span>
+  );
+}
+
 const CATEGORY_COLORS = [
   'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
   'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
@@ -39,8 +81,12 @@ function useCategoryColor(category, categories) {
 
 export default function AIAnalysis() {
   const { token, isAdmin, user } = useAuth();
-  const { minDate, maxDate } = useDateRange(token);
+  // Only the lower bound comes from the data; no upper ceiling, so freshly
+  // analysed calls stay visible.
+  const { minDate } = useDateRange(token);
   const agentMap = useAgentMap(token, isAdmin);
+  // Date range and the auto-sync switch come from the common header.
+  const { dateFrom, dateTo } = usePageChrome();
 
   const [analyses,    setAnalyses]    = useState([]);
   const [total,       setTotal]       = useState(0);
@@ -51,28 +97,27 @@ export default function AIAnalysis() {
   const [pageSize,    setPageSize]    = useState(25);
   const [search,      setSearch]      = useState('');
   const [category,    setCategory]    = useState('');
-  const [dateFrom,    setDateFrom]    = useState('');
-  const [dateTo,      setDateTo]      = useState('');
   const [selected,    setSelected]    = useState(null);
   const [sortBy,      setSortBy]      = useState('created_at');
   const [sortDir,     setSortDir]     = useState('desc');
   const [bugsOnly,    setBugsOnly]    = useState(false);
+  const [source,      setSource]      = useState('all');
+  const [counts,      setCounts]      = useState({ calls: 0, emails: 0 });
   const [bugCategory, setBugCategory] = useState('');
   const [bugCategories, setBugCategories] = useState([]);
   const [callCategory, setCallCategory] = useState('');
   const [callCategories, setCallCategories] = useState([]);
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const [visibleCols, setVisibleCols] = useState({
-    category: true, sub_category: true, ai_insight: false, bug: true, bug_desc: true,
+    source: true, category: true, sub_category: true, ai_insight: false, bug: true, bug_desc: true,
     resolved: false, score: false, quality: true, caller: false, agent: true, duration: false, date: true, recording: true,
   });
   const colMenuRef = useRef(null);
   // Agent-only: map of call_id → tickets[]
   const [ticketMap,   setTicketMap]   = useState({});
 
-  const effectiveFrom = dateFrom || minDate;
-  const effectiveTo   = dateTo   || maxDate;
-  const isDateFiltered = !!(dateFrom || dateTo);
+  const effectiveFrom = dateFrom;
+  const effectiveTo   = dateTo;
 
   // For agents: fetch tickets keyed by call_id whenever analysis rows change
   useEffect(() => {
@@ -123,6 +168,7 @@ export default function AIAnalysis() {
       if (bugsOnly)      params.append('bugsOnly', '1');
       if (bugCategory)   params.append('bugCategory', bugCategory);
       if (callCategory)  params.append('callCategory', callCategory);
+      if (source)        params.append('source', source);
 
       const res  = await fetch(`${API}/api/analysis?${params}`, { headers: { Authorization: `Bearer ${token}` } });
       const data = await res.json();
@@ -132,25 +178,26 @@ export default function AIAnalysis() {
       if (data.categories?.length) setCategories(data.categories);
       if (data.bugCategories?.length) setBugCategories(data.bugCategories);
       if (data.callCategories?.length) setCallCategories(data.callCategories);
+      setCounts(data.counts ?? { calls: 0, emails: 0 });
     } catch (e) {
       if (!silent) setError(e.message);
     } finally {
       setLoading(false);
       isFirstLoad.current = false;
     }
-  }, [token, page, pageSize, search, category, effectiveFrom, effectiveTo, sortBy, sortDir, bugsOnly, bugCategory, callCategory]);
+  }, [token, page, pageSize, search, category, effectiveFrom, effectiveTo, sortBy, sortDir, bugsOnly, bugCategory, callCategory, source]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-refresh every 10 seconds, only when tab is visible (silent — no spinner)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!document.hidden) load(true);
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // The header owns the timer and the manual refresh button.
+  usePageRefresh(load, 10000);
 
-  function clearFilters() { setSearch(''); setCategory(''); setDateFrom(''); setDateTo(''); setBugsOnly(false); setBugCategory(''); setCallCategory(''); setPage(1); }
+  // Narrowing the range while on a later page would strand the operator on an
+  // empty page of a now-shorter list.
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo]);
+
+  // Dates are cleared from the header's Reset, not here.
+  function clearFilters() { setSearch(''); setCategory(''); setBugsOnly(false); setBugCategory(''); setCallCategory(''); setPage(1); }
   const isFiltered = !!(search || category || dateFrom || dateTo || bugsOnly || bugCategory || callCategory);
 
   const { runExport, exporting, label: exportLabel } = useExportJob({
@@ -166,6 +213,9 @@ export default function AIAnalysis() {
     if (callCategory) payload.callCategory = callCategory;
     if (bugCategory) payload.bugCategory = bugCategory;
     if (bugsOnly) payload.bugsOnly = '1';
+    // The CSV follows the toggle, so it can never hold a different set of rows
+    // than the table it was taken from.
+    payload.source = source;
     if (effectiveFrom) payload.dateFrom = `${effectiveFrom}T00:00`;
     if (effectiveTo) payload.dateTo = `${effectiveTo}T23:59`;
     runExport(payload);
@@ -181,27 +231,37 @@ export default function AIAnalysis() {
         />
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">AI Analysis</h1>
-          <p className="text-sm text-slate-500 dark:text-zinc-500 mt-0.5">{total} {isFiltered ? 'filtered' : 'analysed'} calls · auto-refreshes every 10s</p>
-        </div>
-        <div className="flex items-center gap-2 self-start">
+      <PageHeader
+        title="AI Analysis"
+        subtitle={
+          <>
+            {total} {isFiltered ? 'filtered' : 'analysed'} record{total === 1 ? '' : 's'}
+            {/* Named rather than merely counted: the two queues drain at very
+                different rates, and one number hides which is behind. */}
+            {source === 'all' && (counts.calls > 0 || counts.emails > 0) && (
+              <> · {counts.calls} call{counts.calls === 1 ? '' : 's'} · {counts.emails} email{counts.emails === 1 ? '' : 's'}</>
+            )}
+          </>
+        }
+        minDate={minDate}
+      >
+        {isFiltered && (
           <button
             onClick={() => { clearFilters(); setSortBy('created_at'); setSortDir('desc'); }}
-            title="Reset & Refresh"
-            className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
+            className="px-3 h-9 rounded-lg border border-slate-300 dark:border-zinc-700 text-sm text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors whitespace-nowrap"
           >
-            <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M13.5 8a5.5 5.5 0 11-1.1-3.3"/><path d="M13.5 2v3h-3"/>
-            </svg>
+            Clear filters
           </button>
-        </div>
-      </div>
+        )}
+      </PageHeader>
 
       {/* Filters row */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <StatusTabs
+          tabs={SOURCE_TABS}
+          value={source}
+          onChange={v => { setSource(v); setPage(1); }}
+        />
         <div className="relative flex-1 min-w-[160px] max-w-xs">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-zinc-500 pointer-events-none" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="6.5" cy="6.5" r="4.5"/><path d="M10.5 10.5l3 3"/>
@@ -209,7 +269,7 @@ export default function AIAnalysis() {
           <input
             type="text" value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Search category, insight, call ID…"
+            placeholder="Search category, insight, call ID, sender…"
             className="w-full pl-9 pr-4 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-zinc-500 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
@@ -219,7 +279,7 @@ export default function AIAnalysis() {
             onChange={e => { setCallCategory(e.target.value); setPage(1); }}
             className={`px-3 py-2 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-700 rounded-lg text-sm font-medium focus:outline-none transition-colors ${callCategory ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-900 dark:text-white'}`}
           >
-            <option value="">All Call Categories</option>
+            <option value="">All Categories</option>
             {callCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
@@ -256,38 +316,6 @@ export default function AIAnalysis() {
             {bugCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
-        <svg className="w-4 h-4 text-slate-400 dark:text-zinc-500 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M5 1v4M11 1v4M2 7h12"/></svg>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">From</label>
-          <input
-            type="date"
-            value={effectiveFrom}
-            max={effectiveTo}
-            onChange={e => { setDateFrom(e.target.value); setPage(1); }}
-            className="px-1.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">To</label>
-          <input
-            type="date"
-            value={effectiveTo}
-            min={effectiveFrom}
-            onChange={e => { setDateTo(e.target.value); setPage(1); }}
-            className="px-2 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </div>
-        {isDateFiltered && (
-          <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
-            className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-600 text-xs text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-700 transition-colors"
-          >
-            Reset
-          </button>
-        )}
-        {isDateFiltered && (
-          <span className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">Filtered</span>
-        )}
         <ExportButton onClick={handleExport} exporting={exporting} label={exportLabel} className="ml-auto">Export CSV</ExportButton>
       </div>
 
@@ -307,7 +335,9 @@ export default function AIAnalysis() {
           <svg className="w-10 h-10 mx-auto mb-3 opacity-40" viewBox="0 0 20 20" fill="currentColor">
             <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z"/>
           </svg>
-          <p className="text-sm font-medium">No analysed calls found</p>
+          <p className="text-sm font-medium">
+            No analysed {source === 'emails' ? 'emails' : source === 'calls' ? 'calls' : 'records'} found
+          </p>
           {isFiltered && <p className="text-xs mt-1">Try adjusting your filters.</p>}
         </div>
       ) : (
@@ -316,6 +346,7 @@ export default function AIAnalysis() {
             <table className="w-full text-sm min-w-[1100px]">
               <thead>
                 <tr className="bg-slate-100 dark:bg-zinc-900 text-slate-500 dark:text-zinc-400 text-left text-xs uppercase tracking-wide">
+                  {visibleCols.source && <th className="px-4 py-3 font-semibold">Source</th>}
                   {visibleCols.category && <SortTh col="call_category" label="Category" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
                   {visibleCols.sub_category && <th className="px-4 py-3 font-semibold">Sub-Category</th>}
                   {isAdmin ? (
@@ -330,11 +361,11 @@ export default function AIAnalysis() {
                   {visibleCols.resolved && <SortTh col="call_resolved" label="Resolved" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
                   {visibleCols.score && <SortTh col="agent_score" label="Score" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
                   {visibleCols.quality && <SortTh col="audio_quality" label="Quality" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
-                  {visibleCols.caller && <th className="px-4 py-3 font-semibold">Caller</th>}
+                  {visibleCols.caller && <th className="px-4 py-3 font-semibold">Caller / Sender</th>}
                   {isAdmin && visibleCols.agent && <th className="px-4 py-3 font-semibold">Agent</th>}
                   {visibleCols.duration && <th className="px-4 py-3 font-semibold">Duration</th>}
                   {visibleCols.date && <SortTh col="created_at" label="Date" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
-                  {visibleCols.recording && <SortTh col="recording" label="Recording" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
+                  {visibleCols.recording && <SortTh col="recording" label="Recording / Subject" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} />}
                   <th className="px-4 py-3 font-semibold w-10">
                     <div className="relative" ref={colMenuRef}>
                       <button
@@ -350,7 +381,8 @@ export default function AIAnalysis() {
                         <div className="absolute right-0 top-9 z-30 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-xl shadow-lg p-2 w-48">
                           <p className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-zinc-500 px-2 py-1 font-semibold">Show Columns</p>
                           {[
-                            ['category', 'Call Category'],
+                            ['source', 'Source'],
+                            ['category', 'Category'],
                             ['sub_category', 'Sub-Category'],
                             ['ai_insight', 'AI Insight'],
                             ['bug', 'Bug'],
@@ -358,11 +390,11 @@ export default function AIAnalysis() {
                             ['resolved', 'Resolved'],
                             ['score', 'Score'],
                             ['quality', 'Quality'],
-                            ['caller', 'Caller'],
+                            ['caller', 'Caller / Sender'],
                             ['agent', 'Agent'],
                             ['duration', 'Duration'],
                             ['date', 'Date'],
-                            ['recording', 'Recording'],
+                            ['recording', 'Recording / Subject'],
                           ].map(([key, label]) => (
                             <label key={key} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-50 dark:hover:bg-zinc-800 cursor-pointer text-sm text-slate-700 dark:text-zinc-300">
                               <input type="checkbox" checked={visibleCols[key]} onChange={() => toggleCol(key)} className="rounded border-slate-300 dark:border-zinc-600 text-indigo-600 focus:ring-indigo-500" />
@@ -378,7 +410,9 @@ export default function AIAnalysis() {
               <tbody>
                 {analyses.map(a => (
                   <AnalysisRow
-                    key={a.call_id}
+                    // Two id spaces meet here — a call id and an email address —
+                    // and only the pair is guaranteed unique.
+                    key={`${a.source}:${a.id ?? a.call_id}`}
                     analysis={a}
                     categories={categories}
                     callCategories={callCategories}
@@ -420,14 +454,22 @@ const STATUS_BADGE = {
 };
 
 const AnalysisRow = forwardRef(function AnalysisRow({ analysis, categories, callCategories = [], agentMap = {}, isAdmin, tickets = [], cols = {}, onView }, ref) {
-  const catColor = useCategoryColor(analysis.call_category, callCategories);
-  const call = analysis.call;
+  // `primary_category` is the field the server normalises both queues onto;
+  // the fallback keeps a client that is ahead of a stale server rendering.
+  const primaryCategory = analysis.primary_category ?? analysis.call_category;
+  const catColor = useCategoryColor(primaryCategory, callCategories);
+  const isEmail = analysis.source === 'email';
+  const call  = analysis.call;
+  const email = analysis.email;
 
   return (
     <tr ref={ref} className="border-t border-slate-100 dark:border-zinc-800/60 hover:bg-slate-50 dark:hover:bg-zinc-900/50 transition-colors">
+      {cols.source && <td className="px-4 py-3">
+        <SourceBadge source={analysis.source} />
+      </td>}
       {cols.category && <td className="px-4 py-3">
-        {analysis.call_category
-          ? <span className={`px-2.5 py-1 rounded-md text-xs font-medium inline-block whitespace-nowrap ${catColor}`}>{analysis.call_category}</span>
+        {primaryCategory
+          ? <span className={`px-2.5 py-1 rounded-md text-xs font-medium inline-block whitespace-nowrap ${catColor}`}>{primaryCategory}</span>
           : <span className="text-slate-400 dark:text-zinc-500 text-xs italic">Uncategorised</span>}
       </td>}
       {cols.sub_category && <td className="px-4 py-3">
@@ -483,39 +525,62 @@ const AnalysisRow = forwardRef(function AnalysisRow({ analysis, categories, call
       {cols.quality && <td className="px-4 py-3">
         <AudioBadge quality={analysis.audio_quality} />
       </td>}
-      {cols.caller && <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 tabular-nums text-xs">
-        {call?.caller_number || '—'}
+      {cols.caller && <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 text-xs max-w-[200px]">
+        {isEmail
+          ? <span className="truncate block" title={email?.participant_email}>
+              {email?.participant_name || email?.participant_email || '—'}
+            </span>
+          : <span className="tabular-nums">{call?.caller_number || '—'}</span>}
       </td>}
       {isAdmin && cols.agent && (
         <td className="px-4 py-3 text-slate-600 dark:text-zinc-300 text-xs">
-          <span className="flex items-center gap-1">
-            {agentMap[call?.agent_number] && <VerifiedIcon />}
-            {agentMap[call?.agent_number] || call?.agent_name || call?.agent_number || '—'}
-          </span>
+          {isEmail ? (
+            <span className="text-slate-400 dark:text-zinc-500">—</span>
+          ) : (
+            <span className="flex items-center gap-1">
+              {agentMap[call?.agent_number] && <VerifiedIcon />}
+              {agentMap[call?.agent_number] || call?.agent_name || call?.agent_number || '—'}
+            </span>
+          )}
         </td>
       )}
       {cols.duration && <td className="px-4 py-3 text-slate-500 dark:text-zinc-400 tabular-nums text-xs">
-        {formatDuration(call?.duration)}
+        {isEmail
+          ? (analysis.message_count ?? email?.message_count
+              ? `${analysis.message_count ?? email?.message_count} msg`
+              : '—')
+          : formatDuration(call?.duration)}
       </td>}
       {cols.date && <td className="px-4 py-3 text-slate-500 dark:text-zinc-400 text-xs whitespace-nowrap">
-        {formatDate(call?.call_start_time || analysis.created_at)}
+        {formatDate(isEmail ? (email?.last_message_at || analysis.created_at)
+                            : (call?.call_start_time || analysis.created_at))}
       </td>}
       {cols.recording && <td className="px-4 py-3">
-        {call?.call_recording && call?.agent_answer_time
-          ? <AudioPlayer src={call.call_recording} />
-          : <span className="text-slate-400 dark:text-zinc-500 text-xs">—</span>}
+        {isEmail
+          /* The subject is the mail equivalent of the thing you would press
+             play on: what this verdict was formed from. */
+          ? <span className="text-xs text-slate-500 dark:text-zinc-400 truncate block max-w-[220px]" title={email?.last_subject}>
+              {email?.last_subject || '—'}
+            </span>
+          : call?.call_recording && call?.agent_answer_time
+            ? <AudioPlayer src={call.call_recording} />
+            : <span className="text-slate-400 dark:text-zinc-500 text-xs">—</span>}
       </td>}
       <td className="px-4 py-3">
-        <button
-          onClick={onView}
-          title="View Transcription"
-          className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 dark:text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
-        >
-          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="2" y="2" width="12" height="12" rx="2"/>
-            <path d="M5 6h6M5 9h4"/>
-          </svg>
-        </button>
+        {/* A transcription is what a recording produced; mail was already text,
+            and it is read in the Emails tab where the whole chain is. */}
+        {!isEmail && (
+          <button
+            onClick={onView}
+            title="View Transcription"
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 dark:text-zinc-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="2" width="12" height="12" rx="2"/>
+              <path d="M5 6h6M5 9h4"/>
+            </svg>
+          </button>
+        )}
       </td>
     </tr>
   );

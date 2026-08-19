@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './contexts/AuthContext';
+import { PageChromeProvider } from './contexts/PageChromeContext';
 import Sidebar        from './components/Sidebar';
 import Login          from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
@@ -107,7 +108,13 @@ function Shell() {
           <Sidebar activePage={activePage} onNavigate={navigate} />
         </div>
         <main className="flex-1 min-w-0 pt-14 lg:pt-0 overflow-auto">
-          {renderPage()}
+          {/* Keyed by page so a page's registered loader and any stale filter
+              state cannot leak into the next one on navigation. The date range
+              itself lives above this, in the provider, and is meant to carry
+              across pages. */}
+          <div key={activePage} className="contents">
+            {renderPage()}
+          </div>
         </main>
       </div>
     </div>
@@ -115,5 +122,9 @@ function Shell() {
 }
 
 export default function App() {
-  return <Shell />;
+  return (
+    <PageChromeProvider>
+      <Shell />
+    </PageChromeProvider>
+  );
 }

@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import * as XLSX from "xlsx";
 import Pagination from "../components/Pagination";
+import PageHeader from "../components/PageHeader";
+import { usePageRefresh } from "../contexts/PageChromeContext";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -72,6 +74,10 @@ export default function Agents() {
   const { token } = useAuth();
   const { agents, metrics, unverified, loading, error, refetch } =
     useAgents(token);
+
+  // A roster changes rarely, so this polls far slower than the call pages.
+  usePageRefresh(refetch, 30000);
+
   const [exporting, setExporting] = useState(false);
   const [verifyTarget, setVerifyTarget] = useState(null);
   const [modal, setModal] = useState(null);
@@ -173,20 +179,22 @@ export default function Agents() {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
-      {/* Header */}
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-          Agents
-        </h1>
-        <p className="text-sm text-slate-500 dark:text-zinc-500 mt-0.5">
-          {agents.length} registered
-          {unverified.length > 0 && (
-            <span className="ml-2 text-amber-600 dark:text-amber-400">
-              · {unverified.length} unverified
-            </span>
-          )}
-        </p>
-      </div>
+      {/* An agent roster has no date axis, so the filters are hidden — but the
+          auto-sync switch and refresh button still belong here. */}
+      <PageHeader
+        title="Agents"
+        showFilters={false}
+        subtitle={
+          <>
+            {agents.length} registered
+            {unverified.length > 0 && (
+              <span className="ml-2 text-amber-600 dark:text-amber-400">
+                · {unverified.length} unverified
+              </span>
+            )}
+          </>
+        }
+      />
 
       {/* Search + Actions row */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">

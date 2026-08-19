@@ -4,7 +4,8 @@ const path = require('path');
 const jwt = require('jsonwebtoken');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { enqueueRecording } = require('../workers/analysisWorker');
 const { createExportJob, getExportJob, streamCsv } = require('../workers/exportWorker');
 const { unwindTagsStage } = require('../lib/tags');
 const logger = require('../logger');
@@ -91,6 +92,46 @@ function canAccessJob(job, user) {
   if (!job) return false;
   if (user?.role === 'admin') return true;
   return job.requested_by?.agent_number && user?.agent_number && job.requested_by.agent_number === user.agent_number;
+}
+
+/**
+ * Stamp each call on ONE page with where it stands in the analysis queue.
+ *
+ * Without this the Call Report cannot tell "the AI found nothing to say" apart
+ * from "the AI has not read this yet" — both render as an empty Category cell,
+ * and the second one is the state an operator can actually do something about.
+ *
+ * Two fields, both derived, neither stored:
+ *   queue_status       the call_analysis row's status, or null when the call
+ *                      was never enrolled at all
+ *   awaiting_analysis  there is a recording to read and no verdict on it yet —
+ *                      queued, in flight, or never enrolled
+ *
+ * Looked up per page rather than per collection: a page is at most 200 rows and
+ * call_analysis.call_id is unique-indexed, so this is one indexed fetch.
+ */
+async function withAnalysisState(db, calls) {
+  const ids = calls.map(c => c.call_id).filter(Boolean);
+  const rows = ids.length
+    ? await db.collection('call_analysis')
+        .find({ call_id: { $in: ids } }, { projection: { call_id: 1, status: 1 } })
+        .toArray()
+    : [];
+  const statusOf = new Map(rows.map(r => [r.call_id, r.status]));
+
+  return calls.map(call => {
+    const queue_status = statusOf.get(call.call_id) ?? null;
+    return {
+      ...call,
+      queue_status,
+      // A recording is the only thing Gemini can read, so a call without one is
+      // not waiting for anything — it is simply not analysable, and saying
+      // "awaiting" of it would be a queue that never drains.
+      awaiting_analysis: !!call.call_recording
+        && queue_status !== 'completed'
+        && queue_status !== 'failed',
+    };
+  });
 }
 
 router.get('/', async (req, res) => {
@@ -181,7 +222,7 @@ router.get('/', async (req, res) => {
     : [];
   const agentNameMap = Object.fromEntries(agentDocs.map(a => [a.agent_number, a.name]));
 
-  const calls = docs.map(({ _id, ...doc }) => {
+  const calls = await withAnalysisState(db, docs.map(({ _id, ...doc }) => {
     return {
       id: _id.toString(),
       ...doc,
@@ -189,8 +230,33 @@ router.get('/', async (req, res) => {
         ? { agent_name: agentNameMap[doc.agent_number] }
         : {}),
     };
-  });
+  }));
   res.json({ calls, total });
+});
+
+// ─── GET /api/calls/analysis/stats — how much of the queue is outstanding ─────
+// The Call Report's twin of /api/emails/analysis/stats, and deliberately open
+// to agents: "N recordings still waiting on the AI" is the same fact the row
+// badges already show, counted. The admin-only /api/analysis/queue-stats stays
+// the operational view, with retry schedules and failure detail.
+router.get('/analysis/stats', async (req, res) => {
+  const db  = await getDb();
+  const col = db.collection('call_analysis');
+
+  const [pending, processing, completed, failed] = await Promise.all([
+    col.countDocuments({ status: 'pending' }),
+    col.countDocuments({ status: 'processing' }),
+    col.countDocuments({ status: 'completed' }),
+    col.countDocuments({ status: 'failed' }),
+  ]);
+
+  res.json({
+    queue: { pending, processing, completed, failed },
+    // Counted over the queue, so it answers "how much work is outstanding",
+    // not "how many calls have no category" — a call the webhook never
+    // enrolled is invisible here and surfaces as a row badge instead.
+    coverage: { remaining: pending + processing },
+  });
 });
 
 // POST /api/calls/export/jobs - queue large export in background
@@ -512,6 +578,34 @@ router.get('/:id', async (req, res) => {
   if (!doc) return res.status(404).json({ error: 'Not found' });
   const { _id, ...rest } = doc;
   res.json({ id: _id.toString(), ...rest });
+});
+
+// ─── POST /api/calls/:id/analyse — re-read one recording (admin) ─────────────
+// The row-level twin of the Emails tab's "Analyse now". Admin-only for the same
+// reason that one is: every press spends Gemini quota.
+//
+// force=true re-runs a recording whose record already completed or permanently
+// failed — which is what the Retry affordance on a failed row sends.
+router.post('/:id/analyse', requireAdmin, async (req, res) => {
+  const db = await getDb();
+  const { id } = req.params;
+  const filter = ObjectId.isValid(id) ? { $or: [{ _id: new ObjectId(id) }, { call_id: id }] } : { call_id: id };
+
+  const call = await db.collection('calls').findOne(filter, { projection: { call_id: 1, call_recording: 1 } });
+  if (!call) return res.status(404).json({ error: 'Not found' });
+
+  // There is nothing for Gemini to read without audio, and enqueueing anyway
+  // would create a record that can only ever fail its way through five attempts.
+  if (!call.call_recording) {
+    return res.status(409).json({ error: 'This call has no recording to analyse' });
+  }
+
+  const queued = await enqueueRecording(call.call_id, call.call_recording, { force: req.query.force === 'true' });
+  res.json({
+    success: true,
+    queued,
+    message: queued ? 'Queued for analysis' : 'Already analysed — pass ?force=true to re-run',
+  });
 });
 
 // Manually set recording URL for a call by call_id

@@ -330,23 +330,45 @@ async function processTick() {
   }
 }
 
-// ─── Enqueue a new recording (called by webhook) ─────────────────────────────
-async function enqueueRecording(call_id, recording_url) {
+// ─── Enqueue a new recording (called by webhook, and by "Analyse now") ───────
+/**
+ * Queue one recording for analysis.
+ *
+ * Settled work — completed, or permanently failed — is left alone unless
+ * `force` is set. `force` is what the Call Report's "Analyse now" button sends:
+ * an operator asking for a fresh verdict, or a retry of a record that gave up,
+ * means the stored outcome is the thing being replaced.
+ *
+ * @returns {boolean} whether the record was (re-)queued.
+ */
+async function enqueueRecording(call_id, recording_url, { force = false } = {}) {
   const db  = await getDb();
   const col = db.collection('call_analysis');
 
   const existing = await col.findOne({ call_id });
-  if (existing && (existing.status === 'completed' || existing.status === 'failed')) return;
+  if (existing && !force && (existing.status === 'completed' || existing.status === 'failed')) return false;
+
+  const now = new Date();
+  const set = {
+    recording_url,
+    status: 'pending',
+    updated_at: now,
+    // A forced retry is a fresh 5-attempt budget with the backoff cleared:
+    // an operator pressing the button means "now", not "after the next
+    // scheduled wait".
+    ...(force ? { attempts: 0, processing_id: null, next_attempt_at: null, error: null, last_error: null } : {}),
+  };
+  // `attempts` is seeded on insert ONLY when the forced branch is not already
+  // setting it — Mongo rejects an update naming the same path in both
+  // $setOnInsert and $set, and rejects the whole write with it.
+  const setOnInsert = force ? { created_at: now } : { created_at: now, attempts: 0 };
 
   await col.updateOne(
     { call_id },
-    {
-      $setOnInsert: { created_at: new Date(), attempts: 0 },
-      $set: { recording_url, status: 'pending', updated_at: new Date() },
-    },
+    { $setOnInsert: setOnInsert, $set: set },
     { upsert: true }
   );
-  logger.info('[Worker] Enqueued', { call_id });
+  logger.info('[Worker] Enqueued', { call_id, force });
 
   // Kick the worker immediately so new calls don't wait for the next tick
   if (inFlight < MAX_CONCURRENCY) {
@@ -354,6 +376,7 @@ async function enqueueRecording(call_id, recording_url) {
       logger.error('[Worker] Immediate tick failed', { message: err.message })
     ));
   }
+  return true;
 }
 
 // ─── Start the background polling loop ───────────────────────────────────────

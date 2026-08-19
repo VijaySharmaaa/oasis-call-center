@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   useStats,
   useDateRange,
@@ -6,6 +6,8 @@ import {
   pollClick2Call,
 } from "../hooks/useCalls";
 import { useAuth } from "../contexts/AuthContext";
+import PageHeader from "../components/PageHeader";
+import { usePageChrome, usePageRefresh } from "../contexts/PageChromeContext";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -194,21 +196,46 @@ export default function Dashboard({ onNavigate }) {
       return new Set();
     }
   });
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const { token, isAdmin, user } = useAuth();
-  const { minDate, maxDate } = useDateRange(token);
+  // Lower bound only — no upper ceiling, so today's calls always count.
+  const { minDate } = useDateRange(token);
+  // Date range and the auto-sync switch come from the common header.
+  const { dateFrom, dateTo } = usePageChrome();
 
-  // effectiveFrom uses oldest call date as lower bound; no upper ceiling by default.
-  const effectiveFrom = dateFrom || minDate;
-  const effectiveTo = dateTo || maxDate;
-  const isFiltered = !!(dateFrom || dateTo);
+  const effectiveFrom = dateFrom;
+  const effectiveTo = dateTo;
 
   const { stats, refetch: refetchStats } = useStats(token, {
     dateFrom: effectiveFrom,
     dateTo: effectiveTo,
   });
   const s = stats ?? {};
+
+  // Mailbox counters for the same window the call stats use, so the two halves
+  // of the Dashboard always describe the same slice of time.
+  const [emailStats, setEmailStats] = useState(null);
+  const loadEmailStats = useCallback(() => {
+    if (!token) return;
+    const params = new URLSearchParams();
+    if (effectiveFrom) params.append("dateFrom", `${effectiveFrom}T00:00`);
+    if (effectiveTo) params.append("dateTo", `${effectiveTo}T23:59`);
+    fetch(`${API}/api/emails/stats/summary?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then(setEmailStats)
+      .catch(() => {});
+  }, [token, effectiveFrom, effectiveTo]);
+  useEffect(loadEmailStats, [loadEmailStats]);
+  const em = emailStats ?? {};
+
+  // The header's auto-sync switch and refresh button drive the stats reload —
+  // both halves of it, since one range governs both.
+  const refreshAll = useCallback(() => {
+    refetchStats();
+    loadEmailStats();
+  }, [refetchStats, loadEmailStats]);
+  usePageRefresh(refreshAll, 5000);
 
   const [agentTickets, setAgentTickets] = useState([]);
   const [ticketsLoading, setTicketsLoading] = useState(false);
@@ -338,98 +365,12 @@ export default function Dashboard({ onNavigate }) {
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
-      {/* Header + Date Filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-            Dashboard
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-zinc-500 mt-0.5">
-            Overview · auto-refreshes every 5s
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap self-start">
-          <svg
-            className="w-4 h-4 text-slate-400 dark:text-zinc-500 shrink-0"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <rect x="2" y="3" width="12" height="11" rx="1.5" />
-            <path d="M5 1v4M11 1v4M2 7h12" />
-          </svg>
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">
-              From
-            </label>
-            <input
-              type="date"
-              value={effectiveFrom}
-              max={effectiveTo}
-              onChange={(e) => {
-                const val = e.target.value;
-                setDateFrom(val);
-                if (effectiveTo && val > effectiveTo) setDateTo(val);
-              }}
-              className="px-1.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-            />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">
-              To
-            </label>
-            <input
-              type="date"
-              value={effectiveTo}
-              min={effectiveFrom}
-              onChange={(e) => {
-                const val = e.target.value;
-                setDateTo(val);
-                if (effectiveFrom && val < effectiveFrom) setDateFrom(val);
-              }}
-              className="px-2 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-            />
-          </div>
-          {isFiltered && (
-            <button
-              onClick={() => {
-                setDateFrom("");
-                setDateTo("");
-              }}
-              className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-600 text-xs text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-700 transition-colors"
-            >
-              Reset
-            </button>
-          )}
-          {isFiltered && (
-            <span className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">
-              Filtered
-            </span>
-          )}
-          <div className="w-px h-6 bg-slate-300 dark:bg-zinc-700 shrink-0" />
-          <button
-            onClick={refetchStats}
-            title="Refresh"
-            className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M13.5 8a5.5 5.5 0 11-1.1-3.3" />
-              <path d="M13.5 2v3h-3" />
-            </svg>
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        subtitle="Overview"
+        minDate={minDate}
+      />
+
 
       {/* Stat Cards */}
       <div
@@ -481,6 +422,71 @@ export default function Dashboard({ onNavigate }) {
             icon={<TicketIcon />}
           />
         )}
+      </div>
+
+      {/* Mailbox counters — kept in their own labelled row rather than appended
+          to the call cards, because "Total" means a different thing on each
+          side and a single seven-card strip invites reading across them. */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs uppercase tracking-wide font-semibold text-slate-500 dark:text-zinc-500">
+            Mailbox
+          </p>
+          {onNavigate && (
+            <button
+              onClick={() => onNavigate("emails")}
+              className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+            >
+              View all →
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatCard
+            label="Total Emails"
+            value={em.total ?? "—"}
+            color="text-indigo-600 dark:text-indigo-400"
+            icon={<MailIcon />}
+          />
+          <StatCard
+            label="Replies"
+            value={em.replies ?? "—"}
+            color="text-sky-600 dark:text-sky-400"
+            icon={<ReplyIcon />}
+          />
+          <StatCard
+            label="Unread"
+            value={em.unread ?? "—"}
+            color="text-amber-600 dark:text-amber-400"
+            icon={<UnreadIcon />}
+          />
+          <StatCard
+            label="Read"
+            value={em.read ?? "—"}
+            color="text-emerald-600 dark:text-emerald-400"
+            icon={<ReadIcon />}
+          />
+        </div>
+        {/* The three counters partition the mailbox exactly once, which is the
+            only reason they are legible side by side — so say so. */}
+        <p className="mt-2 text-xs text-slate-400 dark:text-zinc-500">
+          {em.total > 0 ? (
+            <>
+              {em.conversations ?? 0} sender{em.conversations === 1 ? "" : "s"} ·
+              replies, unread and read add up to the total
+              {em.awaitingAnalysis > 0 && (
+                <>
+                  {" · "}
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {em.awaitingAnalysis} awaiting AI analysis
+                  </span>
+                </>
+              )}
+            </>
+          ) : (
+            "No mail in this range"
+          )}
+        </p>
       </div>
 
       {/* Charts Row */}
@@ -705,7 +711,190 @@ export default function Dashboard({ onNavigate }) {
           )}
         </div>
       </div>
+
+      {/* Mailbox panels — the email twin of the row above: who is still
+          waiting, and what they are writing about. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px]">
+          <div className="flex items-center justify-between mb-4 shrink-0">
+            <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+              Unread Senders
+            </p>
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate("emails")}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                View all →
+              </button>
+            )}
+          </div>
+          <UnreadSendersList
+            senders={em.latestUnread ?? []}
+            onOpen={onNavigate ? () => onNavigate("emails") : undefined}
+          />
+        </div>
+
+        <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 transition-colors flex flex-col max-h-[520px] overflow-hidden">
+          <div className="flex items-center justify-between mb-4 shrink-0">
+            <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">
+              Email Categories
+            </p>
+            <span className="text-xs text-slate-400 dark:text-zinc-500">
+              by sender
+            </span>
+          </div>
+          <EmailCategoryList items={em.topCategories ?? []} />
+        </div>
+      </div>
     </div>
+  );
+}
+
+/**
+ * Who has written and not been picked up yet — the mailbox's answer to Latest
+ * Missed Calls. One row per sender, not per message: the unit somebody picks up
+ * in a shared mailbox is the person.
+ */
+function UnreadSendersList({ senders, onOpen }) {
+  if (!senders.length)
+    return (
+      <p className="text-sm text-slate-400 dark:text-zinc-500 py-4 text-center flex-1">
+        Nothing unread
+      </p>
+    );
+  return (
+    <div className="flex-1 overflow-y-auto space-y-2">
+      {senders.map((c) => (
+        <div
+          key={c.id}
+          onClick={onOpen}
+          className={`flex items-start justify-between gap-3 pb-2 border-b border-slate-50 dark:border-zinc-800/50 last:border-0 ${
+            onOpen ? "cursor-pointer" : ""
+          }`}
+        >
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-xs font-medium text-slate-700 dark:text-zinc-200 truncate">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+              {c.participant_name || c.participant_email || "—"}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 truncate">
+              {c.last_subject || "—"}
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            <span className="text-xs font-bold text-amber-600 dark:text-amber-400 tabular-nums">
+              {c.unread_count}
+            </span>
+            <p className="text-xs text-slate-400 dark:text-zinc-500 mt-0.5 whitespace-nowrap">
+              {fmtDate(c.last_message_at)}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** What the mailbox is about, counted per sender rather than per message. */
+function EmailCategoryList({ items }) {
+  if (!items.length)
+    return (
+      <p className="text-sm text-slate-400 dark:text-zinc-500 py-4 text-center flex-1">
+        Nothing analysed yet
+      </p>
+    );
+  const maxCount = items[0]?.count || 1;
+  return (
+    <div className="flex-1 overflow-y-auto space-y-4">
+      {items.map((item, i) => (
+        <div
+          key={item.category}
+          className="flex items-center gap-3 animate-fade-in"
+          style={{ animationDelay: `${i * 50}ms` }}
+        >
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-medium text-indigo-600 dark:text-indigo-400 truncate">
+                {item.category}
+              </span>
+              <span className="text-xs font-bold text-slate-700 dark:text-zinc-200 shrink-0 ml-2">
+                <AnimatedNumber value={item.count} duration={400} />
+              </span>
+            </div>
+            <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-zinc-800">
+              <div
+                className="h-full rounded-full bg-indigo-400 dark:bg-indigo-500 animate-bar"
+                style={{
+                  width: `${Math.round((item.count / maxCount) * 100)}%`,
+                  animationDelay: `${i * 50 + 100}ms`,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MailIcon() {
+  return (
+    <svg className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+      <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
+      <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
+    </svg>
+  );
+}
+
+function ReplyIcon() {
+  return (
+    <svg
+      className="w-5 h-5"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 5L3 9l5 4V10.5c4 0 6.5 1.5 8 4.5 0-5-2.5-8-8-8V5z" />
+    </svg>
+  );
+}
+
+function UnreadIcon() {
+  return (
+    <svg
+      className="w-5 h-5"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2.5" y="5" width="15" height="11" rx="2" />
+      <path d="M2.5 7l7.5 5 7.5-5" />
+      <circle cx="16" cy="5" r="3" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function ReadIcon() {
+  return (
+    <svg
+      className="w-5 h-5"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="2.5" y="5" width="15" height="11" rx="2" />
+      <path d="M5.5 9.5l3 3 6-6" />
+    </svg>
   );
 }
 

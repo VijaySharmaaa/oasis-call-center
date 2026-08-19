@@ -5,6 +5,18 @@ let dbPromise = null;
 
 function getDb() {
   if (!dbPromise) {
+    // Check before handing the driver an undefined URI. Without this the driver
+    // fails with "Cannot read properties of undefined (reading 'startsWith')",
+    // repeated by every worker on every retry — a message that says nothing
+    // about the real cause, which is always that the container was started
+    // without its environment. Not cached: the next call re-reads the env.
+    if (!process.env.MONGODB_URI) {
+      return Promise.reject(new Error(
+        'MONGODB_URI is not set — the container was started without its environment ' +
+        '(check docker --env-file / compose env_file / the task definition)'
+      ));
+    }
+
     dbPromise = MongoClient.connect(process.env.MONGODB_URI, {
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
@@ -45,6 +57,21 @@ function getDb() {
           db.collection('email_analysis').createIndex({ gmail_id: 1 }, { unique: true }),
           db.collection('email_analysis').createIndex({ status: 1, created_at: -1 }),
           db.collection('email_analysis').createIndex({ category: 1 }),
+          // Mail is grouped by correspondent, not by Gmail thread — every
+          // message carries the conversation it belongs to, and the chat view
+          // reads one conversation's messages in time order.
+          db.collection('emails').createIndex({ conversation_id: 1, received_at: 1 }),
+          // The Emails tab is a list of conversations sorted by recency, so
+          // that pair is the index every page of it is served from.
+          db.collection('email_conversations').createIndex({ last_message_at: -1 }),
+          db.collection('email_conversations').createIndex({ 'tags.category': 1, last_message_at: -1 }),
+          db.collection('email_conversations').createIndex({ category: 1, last_message_at: -1 }),
+          db.collection('email_conversations').createIndex({ unread_count: 1, last_message_at: -1 }),
+          // The analysis sweep asks exactly this: which conversations have
+          // heard something new since the last verdict.
+          db.collection('email_conversations').createIndex({ needs_analysis: 1 }),
+          db.collection('conversation_analysis').createIndex({ status: 1, created_at: -1 }),
+          db.collection('conversation_analysis').createIndex({ category: 1 }),
           // Tickets are opened from a call or an email detail view, both of
           // which look up "everything already raised for this customer".
           db.collection('tickets').createIndex({ created_at: -1 }),

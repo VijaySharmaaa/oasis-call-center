@@ -1,6 +1,8 @@
 # Gmail Integration — support@upessc.org
 
-Mirrors the support mailbox into MongoDB and serves it at **/emails** in the app. Read-only: the requested scope is `gmail.readonly`, so the server can list and read mail but can never send, modify, or delete it.
+Mirrors the support mailbox into MongoDB and serves it at **/emails** in the app. The requested scope is `gmail.modify` (`GMAIL_SCOPES`), which covers reading, replying, and relabelling — and covers nothing else: it cannot permanently delete a thread, the one Gmail operation with no undo.
+
+**The scope must match the delegation.** A service account may only request what a Workspace super-admin has authorised for its client_id under Admin Console → Security → API controls → Domain-wide delegation. Asking for more than was granted fails the *token exchange*, so the symptom is not "replies fail" — it is the entire mailbox sync stopping with `unauthorized_client`. Widen the delegation first, then `GMAIL_SCOPES`. A deployment that cannot widen it sets `GMAIL_SCOPES` back to `gmail.readonly` and keeps everything except replying and read-state sync; `/sync-status` reports `can_send` and `can_modify` so the UI disables the composer instead of offering a button that always fails.
 
 ## Status
 
@@ -58,24 +60,104 @@ Label changes (read, starred, archived, trashed) are applied straight from the h
 
 Messages land in `emails`, keyed by the Gmail message id (`gmail_id`, unique). Bodies are truncated at `GMAIL_MAX_BODY_CHARS` (200k default) to stay clear of MongoDB's 16 MB document cap. Attachment **bytes are never stored** — `/api/emails/:id/attachments/:attachmentId` streams them from Gmail on demand, and only serves attachment ids the message itself declares.
 
+### Conversations (v3.7.0)
+
+The mailbox is presented as **people, not messages**. Every message carries a `conversation_id` — the correspondent's address, stamped at sync time by `lib/conversations.js` (the sender for mail we received, the recipient for mail we sent, so both sides of an exchange land in one chain). One rollup document per correspondent lives in `email_conversations`, keyed by that address.
+
+**Why the address and not Gmail's `threadId`:** candidates routinely start a fresh thread for a problem they already raised, reply from a different client, or change the subject line halfway through. Grouping by thread scattered one case across several rows; grouping by person does not. Thread ids are still recorded on the rollup, because that is what the reply detection in `reportData.js` reads.
+
+The rollup is **derived state** — every field on it can be recomputed from `emails` by `refreshConversation()`, which runs whenever mail arrives, labels change, or someone marks something read. A conversation that drifts is fixed by recomputing it, never by migrating it.
+
+`needs_analysis` is stored rather than derived at query time: both the worker's sweep and the coverage stat ask for it in a plain filter, and comparing `last_inbound_at` against `analysed_upto` is not something a plain filter can do. It is true exactly when inbound mail landed after the point the last verdict covered — which is both "never analysed" and "replied since" in one flag.
+
 ### API
 
 | Endpoint | Notes |
 |---|---|
-| `GET /api/emails` | Filters: `search`, `unread`, `hasAttachments`, `label`, `from`, `threadId`, `includeTrashed`, `dateFrom`, `dateTo`, `limit`, `offset`. Bodies omitted. |
+| `GET /api/emails/conversations` | **What the Emails tab lists.** One row per correspondent. Filters: `search`, `unread`, `hasAttachments`, `category`, `subCategory`, `analysisStatus`, `includeTrashed`, `dateFrom`, `dateTo`, `limit`, `offset`. |
+| `GET /api/emails/conversations/:id` | The whole chain as a chat, oldest first, plus the conversation's analysis. `:id` is the correspondent's address. Bodies capped at `EMAIL_CHAT_BODY_CHARS` (8k); HTML omitted. |
+| `PATCH /api/emails/conversations/:id/read` | `{ read }` — marks the whole chain, because the unit somebody picks up is the person. |
+| `POST /api/emails/conversations/:id/analyse` | Re-read the chain. Admin only; `?force=true` re-runs a settled one. |
+| `POST /api/emails/conversations/:id/reply` | Send a reply into the chain. Any authenticated user. Returns the stored bubble. |
+| `POST /api/emails/conversations/export/jobs` | Queue a CSV export. Body = the same filters as the list. |
+| `GET /api/emails/conversations/export/jobs/:id` | Progress; returns a signed `download_url` once complete. |
+| `GET /api/emails/conversations/export/jobs/:id/download` | The file. Accepts the signed `?token=` or a Bearer header. |
+| `GET /api/emails` | The message-level list, still available. Filters: `search`, `unread`, `hasAttachments`, `label`, `from`, `threadId`, `includeTrashed`, `dateFrom`, `dateTo`, `limit`, `offset`. Bodies omitted. |
 | `GET /api/emails/:id` | Full message including bodies and attachment metadata. |
 | `GET /api/emails/:id/attachments/:attachmentId` | Proxied download. |
 | `GET /api/emails/sync-status` | Credential + worker health; drives the UI banner. |
 | `POST /api/emails/sync` | Force a pass. Admin only. |
 | `GET /api/emails/labels` | Gmail label list. |
 
-All routes require a valid JWT.
+All routes require a valid JWT — except the token-signed export download, which
+carries its own short-lived credential because `<a download>` cannot send a
+header. That token is scoped to one job and expires in ten minutes.
 
-## AI analysis (v3.6.0)
+### CSV export
+
+Same job-based flow as the call report (`useExportJob` on the front end, the
+`exportWorker` type registry behind it): queue, poll, download. A background job
+rather than a streamed response because the filters can select the whole
+mailbox, and a request that streams for two minutes is a request every proxy in
+the way is entitled to kill.
+
+**One row per correspondent**, matching what the tab lists — a candidate who
+wrote six times about one refund is one row carrying one verdict, not six rows
+repeating it. Columns cover the shape of the chain (message counts by direction,
+unread, first/last message, threads, the other subject lines they used) and the
+verdict formed from all of it (category, sub-category, every tag, insight,
+summary, requested action, bug, language, model).
+
+The filter comes from `lib/conversations.buildConversationFilter` — **the same
+function the list endpoint uses**. That is deliberate and worth keeping: an
+export that selects a different set than the screen it was taken from is worse
+than no export, because nothing about the file says so. A free-text search
+resolves through message bodies to the conversations they belong to, so the CSV
+finds what the search box finds.
+
+## Replying (v3.8.0)
+
+`POST /api/emails/conversations/:id/reply` answers the newest thing the *candidate* said — replying to our own last message would thread the conversation to ourselves. Any authenticated user may reply, on the same reasoning that lets anyone mark read: in a shared mailbox whoever picks the candidate up is the one who answers them. `sent_by` records which operator did, because Gmail has nowhere to put that.
+
+Gmail composes nothing for us; it takes a finished RFC 2822 message, so `lib/mimeMessage` builds one:
+
+- **Threading.** `In-Reply-To` and `References` are what a mail client threads on. Passing Gmail a `threadId` alone puts the reply in the right thread *our* side and leaves it orphaned in the candidate's inbox, which is the side that matters. Both are set, and they agree.
+- **Encoding.** Candidates write in Hindi and are answered in it. The body goes out base64 with an explicit charset, and non-ASCII headers use RFC 2047 encoded-words, or a Devanagari subject arrives as mojibake.
+- **Quoting.** The previous message is quoted underneath the way every mail client does it — the candidate has no Oasis to look the thread up in. It quotes the *cleaned* text, and our own chat strips it back off when rendering.
+- **Header injection.** A newline in a header value ends that header and starts another, which is how a `Bcc` gets appended to someone else's message. Every header value has its newlines stripped.
+
+**Answering re-reads the chain.** `needs_analysis` tracks the newest message in *either direction*, not just inbound, so a reply — sent from the app or from Gmail and picked up by the sync — makes the stored verdict stale and the worker re-reads the whole exchange with our answer in it. That is what the prompt asks for: it treats SUPPORT messages as what has already been answered, and an issue we resolved an hour ago should stop being reported as the live one. The reply route queues that re-read at once so the new verdict lands in seconds rather than on the next sweep. It costs one Gemini call per reply. A chain with no inbound message at all is still never analysed — there is nothing of the candidate's to judge.
+
+The sent copy is fetched back and stored **immediately** rather than waiting for the sync worker's next pass — a chat where your own message takes a minute to appear is a chat nobody trusts. The sync re-fetches the same message later and upserts over it harmlessly. If that fetch-back fails the reply is still reported as sent: it is already gone, and reporting failure would invite a second send.
+
+## Read state, both directions (v3.8.0)
+
+Marking read in Oasis now clears the `UNREAD` label in Gmail too (`messages.batchModify` — one call for a whole chain), and marking unread puts it back. Read state is one fact rather than two views of it.
+
+Two rules keep that honest:
+
+1. **The operator's action survives a Gmail failure.** It is applied to our copy first and unconditionally, and the response carries `gmail_synced` (plus `gmail_error`). Losing a triage marker in a shared mailbox means two people answer the same candidate.
+2. **Gmail wins when it changes there.** A `labelsAdded: UNREAD` history record clears our own `read_at`/`read_by`, because unread means "unread in Gmail AND not opened here" — without that, an operator's old read marker outvoted somebody deliberately putting the mail back in the pile, and the card stayed read however many times they tried.
+3. **Our mirror of `is_unread` is written only when the push succeeds.** Where the delegation is still read-only, our copy must keep saying what Gmail says or the next sync would quietly contradict the screen — there, `read_at` alone carries the action, exactly as before write was granted.
+
+## AI analysis (v3.6.0, conversation-scoped since v3.7.0)
 
 Every synced email goes through the **same Gemini pipeline and the same `CATEGORIZATION_SCHEMA` as calls** — which is fitting, since that schema was extended against this very email corpus (see [`email-taxonomy-fit.md`](./email-taxonomy-fit.md)). `emailAnalysisWorker.js` deliberately mirrors `analysisWorker.js`: atomic claim, `processing_id` ownership, stale-lock recovery, heartbeat, and the same 30s → 2m → 8m → 30m backoff over five attempts. Change the retry policy in one and change it in the other.
 
-Produced per email: `category`, `sub_category`, `summary`, `ai_insight`, `bugs`, `bug_category`, `requested_action`, `language`. The headline pair is mirrored onto the email document so list filtering needs no join.
+**The unit of analysis is the conversation.** A reply is not a new problem; it is more information about the problem already on the table, and reading it alone produced verdicts that contradicted the one before it. So the queue in `conversation_analysis` holds one row per correspondent, each job re-reads the whole exchange (`categorizeConversation`, both directions, oldest first, newest message last), and **the verdict it produces replaces the previous one everywhere**.
+
+The prompt tells the model to judge the chain's *current* state: an issue already answered and not raised since is not live, a follow-up that adds a registration number belongs to the issue it elaborates, and the newest candidate message decides the primary tag. The transcript is budgeted by `EMAIL_ANALYSIS_MAX_CONTEXT_CHARS` (24k) with `EMAIL_ANALYSIS_MAX_CHARS` per message; when it will not fit, the **oldest** messages are dropped, because the current ask is always the newest one.
+
+Produced per conversation: `category`, `sub_category`, `tags`, `summary`, `ai_insight`, `bugs`, `bug_category`, `requested_action`, `language`. It is mirrored four ways so nothing downstream had to change:
+
+| Written to | Why |
+|---|---|
+| `conversation_analysis` | the record itself — queue state, model, token usage |
+| `email_conversations` | headline pair on the rollup, so the tab filters with no join |
+| `emails` (inbound only) | every pre-existing per-message filter, export and report keeps working |
+| `email_analysis` (inbound only) | one mirror row per message; **token usage rides only on the newest**, so the cost report charges one call once |
+
+Our own replies are deliberately left unmirrored: what support wrote is not the candidate's issue.
 
 **What has no email equivalent**, and is therefore absent rather than faked: `transcription`, `audio_quality`, `agent_score`, `call_resolved`. An inbound email has no audio and no agent turn to score.
 
@@ -86,7 +168,18 @@ Produced per email: `category`, `sub_category`, `summary`, `ai_insight`, `bugs`,
 | `Email too Short` | `Call too Short` | Body under `EMAIL_ANALYSIS_MIN_CHARS` after quoted replies and signatures are stripped. Assigned *without* a Gemini call. |
 | `Content Unclear` | `Audio Unclear` | Gemini can find no identifiable request — bounce, auto-reply, bare greeting, attachment with no text. |
 
-Quoted history and signature blocks are trimmed before the prompt, and the body is capped at `EMAIL_ANALYSIS_MAX_CHARS`; a 40-message thread would otherwise cost tokens for text the candidate did not write.
+### What a message actually says (`lib/emailText`)
+
+A support email is mostly not the message. A three-line request arrives wrapped in a sign-off, a corporate disclaimer nobody has read, the whole previous exchange re-quoted with `> ` in front of it, and the header line naming who wrote what when. `cleanEmailBody()` takes all of that off, in order: quoted-reply markers (including the `On … wrote:` header **wrapped across two lines**, which is how Gmail sends it and what a single-line pattern misses), `> ` lines, the `-- ` signature delimiter, confidentiality boilerplate, and a trailing closing plus the name under it.
+
+**One rule overrides every heuristic: never return nothing.** A bare forward with no covering note IS the content, and a candidate who writes only "Best regards" has still said something — so any step that would empty the body is skipped.
+
+Both readers go through it, which is the point of it being one function:
+
+- **the chat**, so a bubble shows the message. Six replies would otherwise repeat the same paragraph six times down one conversation. `body_trimmed` is returned alongside, and the bubble offers **Show original** — the per-message endpoint still serves the mail untouched, which is what makes trimming safe rather than lossy.
+- **the prompt**, so the chain supplies the history once instead of paying for it re-quoted inside every reply. On the sample message that is 1358 characters down to 206.
+
+**One trap worth keeping in mind.** The sweep enrols conversations carrying `needs_analysis`, forced — forcing clears `next_attempt_at`. It must therefore skip rows already `pending` or `processing`, or a job merely waiting out its retry backoff is retried at full speed on every tick, spending Gemini quota as fast as the API answers. `tests/emailAnalysisWorker.test.js` pins this.
 
 ### Verified against the real corpus
 

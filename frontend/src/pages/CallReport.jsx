@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   useCalls,
   useDateRange,
@@ -12,6 +12,9 @@ import CallTicketModal from "../components/CallTicketModal";
 import InitiateCallModal from "../components/InitiateCallModal";
 import Pagination from "../components/Pagination";
 import ExportButton from "../components/ExportButton";
+import PageHeader from "../components/PageHeader";
+import StatusTabs from "../components/StatusTabs";
+import { usePageChrome, usePageRefresh } from "../contexts/PageChromeContext";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -36,59 +39,10 @@ const STATUS_TABS = [
   },
 ];
 
-function StatusTabs({ status, onStatus }) {
-  const sliderRef = useRef(null);
-  const tabRefs = useRef({});
-  const activeTab =
-    STATUS_TABS.find((t) => t.value === status) || STATUS_TABS[0];
-  const isDark = document.documentElement.classList.contains("dark");
-
-  useLayoutEffect(() => {
-    const el = tabRefs.current[status];
-    const slider = sliderRef.current;
-    if (el && slider) {
-      slider.style.transform = `translateX(${el.offsetLeft}px)`;
-      slider.style.width = `${el.offsetWidth}px`;
-      slider.style.backgroundColor = activeTab.bg[isDark ? 1 : 0];
-    }
-  }, [status, activeTab, isDark]);
-
-  return (
-    <div className="relative flex gap-1 bg-slate-100 dark:bg-zinc-800/60 rounded-lg p-1">
-      <div
-        ref={sliderRef}
-        className="absolute top-1 bottom-1 left-0 rounded-md shadow-sm will-change-transform"
-        style={{
-          transition:
-            "transform 300ms cubic-bezier(0.4,0,0.2,1), width 300ms cubic-bezier(0.4,0,0.2,1), background-color 300ms cubic-bezier(0.4,0,0.2,1)",
-        }}
-      />
-      {STATUS_TABS.map((tab) => (
-        <button
-          key={tab.value}
-          ref={(el) => {
-            tabRefs.current[tab.value] = el;
-          }}
-          onClick={() => onStatus(tab.value)}
-          className={`relative z-10 px-3 py-1.5 rounded-md text-sm font-medium transition-colors duration-300 whitespace-nowrap ${
-            status === tab.value
-              ? tab.text
-              : "text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-200"
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export default function CallReport() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
   const [agentNumber, setAgentNumber] = useState("");
   const [sortBy, setSortBy] = useState("created_at");
   const [sortDir, setSortDir] = useState("desc");
@@ -97,7 +51,9 @@ export default function CallReport() {
   const [agents, setAgents] = useState([]);
   const [pageSize, setPageSize] = useState(25);
   const { token, isAdmin, user } = useAuth();
-  const { minDate, maxDate } = useDateRange(token);
+  // Only the lower bound comes from the data; there is deliberately no upper
+  // ceiling, so calls arriving right now stay visible.
+  const { minDate } = useDateRange(token);
   const agentMap = useAgentMap(token, isAdmin);
   const stationMap = useStationMap(token);
 
@@ -112,12 +68,32 @@ export default function CallReport() {
       .catch(() => {});
   }, [isAdmin, token]);
 
-  // effectiveFrom uses the oldest call date as default lower bound.
-  // effectiveTo is intentionally left empty when no user filter is set so that
-  // new webhook arrivals are never hidden by a stale upper-date ceiling.
-  const effectiveFrom = dateFrom || minDate;
-  const effectiveTo = dateTo || maxDate;
+  // How much of the AI queue is outstanding, headlined the same way the Emails
+  // tab headlines it. Refreshed with the list, since pressing "Analyse now" on
+  // a row is exactly what changes this number.
+  const [aiStats, setAiStats] = useState(null);
+  const loadAiStats = useCallback(() => {
+    if (!token) return;
+    fetch(`${API}/api/calls/analysis/stats`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then(setAiStats)
+      .catch(() => {});
+  }, [token]);
+  useEffect(loadAiStats, [loadAiStats]);
+
+  // The date range now comes from the common header. Empty means unbounded —
+  // which is also what keeps new webhook arrivals visible, since there is no
+  // stale upper-date ceiling to hide them behind.
+  const { dateFrom, dateTo } = usePageChrome();
+  const effectiveFrom = dateFrom;
+  const effectiveTo = dateTo;
   const isFiltered = !!(dateFrom || dateTo || search || status || agentNumber);
+
+  // Narrowing the range while on a later page would strand the operator on an
+  // empty page of a now-shorter list.
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo]);
 
   const { calls, total, loading, error, refetch } = useCalls({
     search,
@@ -139,24 +115,17 @@ export default function CallReport() {
     setStatus(val);
     setPage(1);
   }
-  function handleDateFrom(e) {
-    const val = e.target.value;
-    setDateFrom(val);
-    if (effectiveTo && val > effectiveTo) setDateTo(val);
-    setPage(1);
-  }
-  function handleDateTo(e) {
-    const val = e.target.value;
-    setDateTo(val);
-    if (effectiveFrom && val < effectiveFrom) setDateFrom(val);
-    setPage(1);
-  }
-  function clearDates() {
-    setDateFrom("");
-    setDateTo("");
+  // Dates are the header's job now; only the agent filter is left to clear.
+  function clearAgent() {
     setAgentNumber("");
     setPage(1);
   }
+
+  // The header's switch and refresh button drive this page's refetch. The
+  // queue headline rides along with it, because a row that finishes analysing
+  // is one fewer outstanding job.
+  const refreshAll = useCallback(() => { refetch(); loadAiStats(); }, [refetch, loadAiStats]);
+  usePageRefresh(refreshAll, 5000);
 
   function toggleSort(col) {
     if (sortBy === col) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
@@ -202,44 +171,40 @@ export default function CallReport() {
           defaultAgentNumber={!isAdmin ? user?.agent_number : ""}
         />
       )}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-            Call Report
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-zinc-500 mt-0.5">
-            {total} {isFiltered ? "filtered" : "total"} records · auto-refreshes
-            every 5s
-          </p>
-        </div>
-        <div className="flex gap-2 self-start">
-          <button
-            onClick={refetch}
-            title="Refresh"
-            className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <svg
-              className="w-4 h-4"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M13.5 8a5.5 5.5 0 11-1.1-3.3" />
-              <path d="M13.5 2v3h-3" />
-            </svg>
-          </button>
-          <button
-            onClick={() => setShowDial(true)}
-            className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
-          >
-            Initiate Call
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="Call Report"
+        subtitle={
+          <>
+            {total} {isFiltered ? "filtered" : "total"} records
+            {/* Counted over the queue, so it is what the worker still owes —
+                not a count of rows in view. */}
+            {aiStats?.coverage?.remaining > 0 && (
+              <>
+                {" · "}
+                <span className="text-amber-600 dark:text-amber-400">
+                  {aiStats.coverage.remaining} awaiting AI analysis
+                </span>
+              </>
+            )}
+            {aiStats?.queue?.failed > 0 && (
+              <>
+                {" · "}
+                <span className="text-red-600 dark:text-red-400">
+                  {aiStats.queue.failed} analysis failed
+                </span>
+              </>
+            )}
+          </>
+        }
+        minDate={minDate}
+      >
+        <button
+          onClick={() => setShowDial(true)}
+          className="px-4 h-9 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+        >
+          Initiate Call
+        </button>
+      </PageHeader>
 
       {/* Filters */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -281,49 +246,13 @@ export default function CallReport() {
             ))}
           </select>
         )}
-        <StatusTabs status={status} onStatus={handleStatus} />
-        <svg
-          className="w-4 h-4 text-slate-400 dark:text-zinc-500 shrink-0 hidden sm:block"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <rect x="2" y="3" width="12" height="11" rx="1.5" />
-          <path d="M5 1v4M11 1v4M2 7h12" />
-        </svg>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">
-            From
-          </label>
-          <input
-            type="date"
-            value={effectiveFrom}
-            max={effectiveTo}
-            onChange={handleDateFrom}
-            className="px-1.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">
-            To
-          </label>
-          <input
-            type="date"
-            value={effectiveTo}
-            min={effectiveFrom}
-            onChange={handleDateTo}
-            className="px-2 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </div>
-        {isFiltered && (
+        <StatusTabs tabs={STATUS_TABS} value={status} onChange={handleStatus} />
+        {agentNumber && (
           <button
-            onClick={clearDates}
+            onClick={clearAgent}
             className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-600 text-xs text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-700 transition-colors"
           >
-            Reset
+            Clear agent
           </button>
         )}
         <ExportButton
@@ -360,6 +289,7 @@ export default function CallReport() {
           stationMap={stationMap}
           token={token}
           onCreateTicket={(call) => setTicketCall(call)}
+          onAnalysisQueued={refreshAll}
           sortBy={sortBy}
           sortDir={sortDir}
           onSort={toggleSort}

@@ -30,7 +30,61 @@ const logger = require('../logger');
 
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1';
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+
+/**
+ * WHAT THIS SERVICE IS ALLOWED TO DO.
+ *
+ * `gmail.modify` covers everything Oasis needs — read mail, send a reply, and
+ * add or remove the UNREAD label — and covers nothing else: it cannot delete a
+ * thread permanently, which is the one Gmail operation with no undo.
+ *
+ * The scope is configurable because it is half of a pair. A service account may
+ * only request what a Workspace super-admin has authorised for its client_id in
+ * Admin Console → Security → API controls → Domain-wide delegation, and asking
+ * for more than was granted fails the token exchange outright with
+ * `unauthorized_client` — which takes the whole mailbox sync down with it, not
+ * just the write. So a deployment whose delegation still says read-only sets
+ * GMAIL_SCOPES back to the readonly scope and keeps syncing; it simply cannot
+ * reply or push read state, and says so rather than erroring per action.
+ */
+const MODIFY_SCOPE   = 'https://www.googleapis.com/auth/gmail.modify';
+const READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+
+function scopes() {
+  const configured = String(process.env.GMAIL_SCOPES || '').trim();
+  return configured ? configured.split(/[\s,]+/).filter(Boolean) : [MODIFY_SCOPE];
+}
+
+/** The space-separated form the token endpoints want. */
+function scopeString() {
+  return scopes().join(' ');
+}
+
+/**
+ * Can this service change anything in the mailbox — send, or relabel?
+ * Read by /sync-status, so the UI can disable a composer it knows will fail
+ * instead of offering a Send button that always errors.
+ */
+function canWrite() {
+  return scopes().some(s => s === MODIFY_SCOPE
+    || s === 'https://mail.google.com/'
+    || s === 'https://www.googleapis.com/auth/gmail.send'
+    || s === 'https://www.googleapis.com/auth/gmail.labels');
+}
+
+/** Sending specifically — gmail.send grants it without granting relabelling. */
+function canSend() {
+  return scopes().some(s => s === MODIFY_SCOPE
+    || s === 'https://mail.google.com/'
+    || s === 'https://www.googleapis.com/auth/gmail.send');
+}
+
+/** Relabelling specifically — what read/unread sync needs. */
+function canModifyLabels() {
+  return scopes().some(s => s === MODIFY_SCOPE
+    || s === 'https://mail.google.com/'
+    || s === 'https://www.googleapis.com/auth/gmail.labels');
+}
 
 // Bodies are stored in Mongo, which caps a document at 16 MB. A single
 // marketing email with inlined CSS can be megabytes of HTML, so truncate.
@@ -137,7 +191,7 @@ async function serviceAccountToken() {
   const claims = {
     iss:   key.client_email,
     sub:   mailbox(),          // the impersonated user — this is the delegation
-    scope: SCOPE,
+    scope: scopeString(),
     aud:   key.token_uri || OAUTH_TOKEN_URL,
     iat:   now,
     exp:   now + 3600,
@@ -155,7 +209,7 @@ async function serviceAccountToken() {
   } catch (err) {
     if (/unauthorized_client/.test(err.message)) {
       err.message = `Domain-wide delegation is not authorised for ${mailbox()}. ` +
-        `A Workspace super-admin must add client_id ${key.client_id} with scope ${SCOPE} ` +
+        `A Workspace super-admin must add client_id ${key.client_id} with scope ${scopeString()} ` +
         `under Admin Console → Security → API controls → Domain-wide delegation. (${err.message})`;
     }
     throw err;
@@ -229,6 +283,47 @@ async function apiGet(path, params = {}, { retried = false } = {}) {
   }
 
   return res.json();
+}
+
+/**
+ * One Gmail API POST. Same token refresh and retry classification as apiGet;
+ * separate because a write must never be replayed blindly — the 401 refresh is
+ * safe (the request never reached the mailbox), but a 5xx is left to the caller,
+ * which is why `retryable` is reported rather than acted on here.
+ */
+async function apiPost(path, body, { retried = false } = {}) {
+  const token = await getAccessToken();
+  const res = await fetch(userPath(path), {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body),
+  });
+
+  if (res.status === 401 && !retried) {
+    tokenCache = null;
+    return apiPost(path, body, { retried: true });
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    const err  = new Error(`Gmail API ${path} failed (${res.status}): ${text.slice(0, 400)}`);
+    err.status    = res.status;
+    err.retryable = res.status === 429 || res.status >= 500;
+    // 403 on a write is nearly always the delegation missing the scope, and the
+    // raw message says "Request had insufficient authentication scopes", which
+    // sends people to the wrong place. Name the fix.
+    if (res.status === 403) {
+      err.message += ` — the mailbox delegation may not include ${MODIFY_SCOPE}. ` +
+        'A Workspace super-admin authorises it under Admin Console → Security → ' +
+        'API controls → Domain-wide delegation, and GMAIL_SCOPES must request it.';
+      err.scopeProblem = true;
+    }
+    throw err;
+  }
+
+  // 204 on batchModify — a successful write with nothing to say.
+  const text = await res.text();
+  return text ? JSON.parse(text) : {};
 }
 
 // ─── Message parsing ──────────────────────────────────────────────────────────
@@ -326,6 +421,11 @@ function parseMessage(msg) {
 
     body_text:       truncate(body.text),
     body_html:       truncate(body.html),
+    // The chat view offers "open the rendered message" only when there is one
+    // to open, and it reads the message list with body_html projected away —
+    // an HTML part can be hundreds of kilobytes. Recording its existence here
+    // is what lets that list answer the question without loading it.
+    has_html:        !!(body.html || '').trim(),
     attachments:     body.attachments,
     has_attachments: body.attachments.length > 0,
     size_estimate:   msg.sizeEstimate || 0,
@@ -385,6 +485,44 @@ async function getAttachment(messageId, attachmentId) {
   return Buffer.from((data.data || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }
 
+/**
+ * Send a message. `raw` is the full RFC 2822 text, base64url encoded.
+ *
+ * `threadId` is what makes a reply a reply rather than a new conversation in the
+ * candidate's inbox — Gmail also requires the References/In-Reply-To headers to
+ * agree with it, which lib/mimeMessage sets.
+ *
+ * @returns {Promise<{id: string, threadId: string, labelIds: string[]}>}
+ */
+async function sendMessage({ raw, threadId }) {
+  return apiPost('/messages/send', threadId ? { raw, threadId } : { raw });
+}
+
+/** Add and/or remove labels on one message. */
+async function modifyMessage(id, { addLabelIds = [], removeLabelIds = [] } = {}) {
+  return apiPost(`/messages/${encodeURIComponent(id)}/modify`, { addLabelIds, removeLabelIds });
+}
+
+/**
+ * The same for many messages at once — one call instead of one per message,
+ * which matters because marking a chain read touches every message in it.
+ * Gmail caps a batch at 1000 ids and returns no body.
+ */
+async function batchModifyMessages(ids, { addLabelIds = [], removeLabelIds = [] } = {}) {
+  const batch = (ids || []).filter(Boolean);
+  if (!batch.length) return { modified: 0 };
+
+  const CHUNK = 1000;
+  for (let i = 0; i < batch.length; i += CHUNK) {
+    await apiPost('/messages/batchModify', {
+      ids: batch.slice(i, i + CHUNK),
+      addLabelIds,
+      removeLabelIds,
+    });
+  }
+  return { modified: batch.length };
+}
+
 /** All labels, so the UI can show human names instead of raw label ids. */
 async function listLabels() {
   const data = await apiGet('/labels');
@@ -395,6 +533,14 @@ module.exports = {
   isConfigured,
   authMode,
   mailbox,
+  scopes,
+  scopeString,
+  canWrite,
+  canSend,
+  canModifyLabels,
+  sendMessage,
+  modifyMessage,
+  batchModifyMessages,
   getAccessToken,
   getProfile,
   listMessages,

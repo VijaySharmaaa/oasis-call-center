@@ -8,6 +8,12 @@
 
 const logger = require('../logger');
 const { dynamicCategoriesEnabled } = require('../config/features');
+// Conversation shape lives in lib/conversations: which side of the exchange a
+// message is on, and how a chain of them renders as one transcript.
+const { buildTranscript, isOutbound } = require('../lib/conversations');
+const {
+  cleanEmailBody, emailToPlainText, rawEmailText, htmlToText, stripQuotedText,
+} = require('../lib/emailText');
 
 // ─── Categorization schema ────────────────────────────────────────────────────
 
@@ -1283,59 +1289,12 @@ function emailBodyCharLimit() {
 }
 
 /**
- * Strip the quoted history and signature block so the model reads THIS message
- * rather than the whole thread. Conservative: only well-known reply markers.
+ * The text helpers live in lib/emailText: the chat view needs exactly the same
+ * answer this prompt does — the message with the quoted thread, the signature
+ * and the corporate disclaimer taken off — and two copies of that judgement
+ * would disagree within a week. Re-exported here because this module's API is
+ * what the analysis tests and callers have always used.
  */
-function stripQuotedText(body) {
-  if (!body) return '';
-  const markers = [
-    /^\s*On .{0,120}wrote:\s*$/im,               // Gmail / Apple Mail
-    /^\s*-{2,}\s*Original Message\s*-{2,}\s*$/im, // Outlook
-    /^\s*_{10,}\s*$/m,                            // Outlook divider
-    /^\s*From:\s.+\s*$/im,                        // forwarded header block
-  ];
-  let cut = body.length;
-  for (const re of markers) {
-    const m = body.match(re);
-    if (!m || m.index === undefined) continue;
-    // Ignore a marker that would leave nothing behind — candidates often reply
-    // above a blank line, or forward a thread without writing anything at all.
-    // In that case the quoted text IS the content and must be kept.
-    if (!body.slice(0, m.index).trim()) continue;
-    if (m.index < cut) cut = m.index;
-  }
-  return body.slice(0, cut).replace(/\n{3,}/g, '\n\n').trim();
-}
-
-/** Very rough HTML → text, for mail that carries no text/plain part. */
-function htmlToText(html) {
-  if (!html) return '';
-  return html
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/**
- * The readable text of an email, preferring the plain-text part.
- * Exported for the worker's "is there anything here at all" check.
- */
-function emailToPlainText(email = {}) {
-  const raw = (email.body_text && email.body_text.trim())
-    ? email.body_text
-    : htmlToText(email.body_html);
-  return stripQuotedText(raw);
-}
 
 /**
  * Token usage from a Gemini response, in the shape the report prices.
@@ -1512,36 +1471,69 @@ async function generateJson(prompt, { apiKey, model, fallbackModel, maxOutputTok
 }
 
 /**
- * Categorize ONE support email against CATEGORIZATION_SCHEMA.
+ * How much of a conversation is worth paying for in one prompt.
  *
- * @param {object} email  As stored in the `emails` collection: subject,
- *                        from_name, from_email, received_at, body_text,
- *                        body_html, attachments.
+ * A long-running candidate can accumulate a dozen messages; the whole exchange
+ * is what makes the current ask legible, but the tail of it is not worth
+ * unbounded tokens. The transcript builder spends this budget newest-first.
+ */
+function conversationCharLimit() {
+  return Math.max(1000, Number(process.env.EMAIL_ANALYSIS_MAX_CONTEXT_CHARS) || 24_000);
+}
+
+/**
+ * Categorize ONE CONVERSATION — every message a candidate has exchanged with
+ * the mailbox — against CATEGORIZATION_SCHEMA.
+ *
+ * This is the unit of analysis. A reply is not a new problem: it is more
+ * information about the problem already on the table, and reading it alone
+ * produces a verdict that contradicts the one before it. So the whole exchange
+ * goes into one prompt, the newest message last, and the verdict that comes
+ * back REPLACES whatever the conversation held before.
+ *
+ * The contract, the schema, the snapping rules and the failure classification
+ * are the same ones categorizeRecording uses — this differs only in what it
+ * reads.
+ *
+ * @param {object} conversation  { participant_email, participant_name } — who
+ *                               the exchange is with.
+ * @param {Array<object>} messages  Chronological, oldest first, as stored in
+ *                               `emails`. Both directions: what we sent is
+ *                               context for what they replied.
  * @param {object} opts   { callCategories, bugCategories } — the same live
  *                        taxonomy collections the call worker passes.
- * @returns {Promise<object>} { success, category, sub_category, summary,
+ * @returns {Promise<object>} { success, category, sub_category, tags, summary,
  *                        ai_insight, bugs, bug_category, email_category,
- *                        email_sub_category, language, model_used,
- *                        used_fallback } or { success: false, error, permanent }
+ *                        email_sub_category, language, message_count,
+ *                        model_used, used_fallback }
+ *                        or { success: false, error, permanent }
  */
-async function categorizeEmail(email = {}, { callCategories = [], bugCategories = [] } = {}, maxRetries = 3) {
+async function categorizeConversation(conversation = {}, messages = [], { callCategories = [], bugCategories = [] } = {}, maxRetries = 3) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return { success: false, error: 'GEMINI_API_KEY not set' };
 
   const model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
   const fallbackEnv = process.env.GEMINI_FALLBACK_MODEL;
   const fallbackModel = (fallbackEnv === undefined ? 'gemini-2.5-flash-lite' : fallbackEnv).trim();
-  // Emails need far less headroom than a transcript — no audio to transcribe.
+  // A conversation is longer than a single mail but still text — nothing like
+  // the headroom a transcribed call needs.
   const maxOutputTokens = Math.max(512, Number(process.env.EMAIL_ANALYSIS_MAX_TOKENS) || 2048);
   const useDynamicCategories = dynamicCategoriesEnabled();
 
-  const bodyText = emailToPlainText(email);
-  const limit = emailBodyCharLimit();
-  const trimmed = bodyText.length > limit
-    ? `${bodyText.slice(0, limit)}\n[… ${bodyText.length - limit} more characters omitted]`
-    : bodyText;
+  const ordered = [...messages].sort((a, b) =>
+    new Date(a.received_at || 0).getTime() - new Date(b.received_at || 0).getTime());
 
-  const attachmentNames = (email.attachments || []).map(a => a.filename).filter(Boolean);
+  const { transcript, includedCount, omittedCount, totalChars } = buildTranscript(
+    ordered,
+    emailToPlainText,
+    { totalCharLimit: conversationCharLimit(), perMessageCharLimit: emailBodyCharLimit() }
+  );
+
+  const inbound = ordered.filter(m => !isOutbound(m));
+  const latest  = inbound[inbound.length - 1] || ordered[ordered.length - 1] || {};
+  const participantEmail = conversation.participant_email || latest.from_email || '';
+  const participantName  = conversation.participant_name  || latest.from_name  || '';
+  const multi = ordered.length > 1;
 
   const taxonomyTask = !useDynamicCategories ? '' : `8) Email Category & Sub-Category:
    - Use the hierarchical taxonomy below: { "name": "<top-level>", "sub_categories": [...] }.
@@ -1558,12 +1550,29 @@ async function categorizeEmail(email = {}, { callCategories = [], bugCategories 
   const bugCategoryTaskNo = useDynamicCategories ? 9 : 8;
 
   const prompt = `
-You are analyzing ONE email sent to the UPTET-2026 candidate support helpline
-mailbox. The sender is a candidate (or their representative). You are reading
-only what the candidate wrote — there is no support reply to judge.
+You are analyzing the FULL EMAIL CONVERSATION between ONE candidate of the
+UPTET-2026 candidate support helpline and the support mailbox. The exchange may
+be a single message or a long back-and-forth, and it may span several subject
+lines — it is all the same person and all the same case.
 
 RETURN ONLY ONE VALID JSON OBJECT.
 Do not include markdown, explanations, or any extra text.
+
+═══════════════════════════════════════════════════════
+READ THE WHOLE EXCHANGE, VERDICT ON ITS CURRENT STATE
+═══════════════════════════════════════════════════════
+Messages are marked CANDIDATE (what they wrote) or SUPPORT (what we replied),
+oldest first. Judge the CANDIDATE's messages; SUPPORT messages are context that
+tells you what has already been answered.
+
+  • An issue the candidate raised earlier and has since had answered, withdrawn,
+    or stopped mentioning is NOT a live issue — do not tag it.
+  • An issue they repeat, escalate, or reply to with "still not working" IS the
+    live issue, and it is the primary one.
+  • A follow-up that adds detail (a registration number, a screenshot, a
+    correction) belongs to the issue it elaborates — it is not a second issue.
+  • If the newest candidate message raises something new, that is the primary
+    issue even when earlier messages were about something else.
 
 ═══════════════════════════════════════════════════════
 STRICT FIELD OWNERSHIP — violating these rules is wrong
@@ -1575,8 +1584,9 @@ Every observation belongs to EXACTLY ONE field.
   ai_insight    → owns a 4-5 word label for the CANDIDATE'S ISSUE ONLY. Never about
                   formatting, language, attachments, or how the email was written.
 
-  summary       → owns a two-sentence factual recap: sentence 1 = what the candidate's
-                  problem is, sentence 2 = what they are asking support to do.
+  summary       → owns a two-sentence factual recap of the conversation as it
+                  now stands: sentence 1 = what the candidate's problem is,
+                  sentence 2 = what they are asking support to do.
 
   category /
   sub_category  → own the query type per schema, based purely on what the candidate asks.
@@ -1584,8 +1594,8 @@ Every observation belongs to EXACTLY ONE field.
 ═══════════════════════════════════════════════════════
 CONTENT UNCLEAR SPECIAL CASE — if category = "Content Unclear"
 ═══════════════════════════════════════════════════════
-Use this ONLY when the email carries no identifiable request: an empty or
-near-empty body, a bare greeting, an attachment with no explanatory text, an
+Use this ONLY when the conversation carries no identifiable request: empty or
+near-empty bodies, a bare greeting, an attachment with no explanatory text, an
 automated bounce/out-of-office, or text too garbled to interpret. Then apply
 these EXACT values:
   category      = "Content Unclear"
@@ -1594,13 +1604,14 @@ these EXACT values:
   ai_insight    = "-"
   bugs          = "-"
 
-Do NOT use Content Unclear merely because the email is short, informal,
+Do NOT use Content Unclear merely because the messages are short, informal,
 misspelled, in Hindi, or written in Hinglish. A one-line request like
 "payment ho gaya form nahi bhara" IS classifiable.
 
 TASKS:
 1) Tagging:
-   - Return one TAG PER DISTINCT ISSUE the candidate raises, in "tags".
+   - Return one TAG PER DISTINCT LIVE ISSUE the candidate raises across the
+     whole conversation, in "tags".
    - A tag is { "category": "<top-level key>", "sub_category": "<value listed under it>" }.
    - Both names MUST come from the schema below, verbatim. Do not invent or
      paraphrase schema names.
@@ -1610,16 +1621,16 @@ TASKS:
 2) How many tags:
    - Candidates often raise two or three problems at once. Tag EVERY one of them —
      an issue with no tag is an issue support will never see.
-   - One issue = one tag. Do NOT emit a second tag for the same issue worded
-     differently, and do NOT tag something the candidate merely mentions in
-     passing without asking about.
-   - Most emails need exactly one tag. Never return more than ${MAX_TAGS}.
-   - Order tags by importance: tags[0] is the PRIMARY issue — the one they lead
-     with or ask for most explicitly.
+   - One issue = one tag. Do NOT emit a second tag because the same issue was
+     raised twice in two messages, and do NOT tag something mentioned in passing
+     without a request attached.
+   - Most conversations need exactly one tag. Never return more than ${MAX_TAGS}.
+   - Order tags by importance: tags[0] is the PRIMARY issue — what the exchange
+     is about NOW, judged from the newest candidate message backwards.
    - "category" and "sub_category" at the top level MUST repeat tags[0] exactly.
 
 3) Summary:
-   - Sentence 1: what is the candidate's problem?
+   - Sentence 1: what is the candidate's problem, as it stands after the latest message?
    - Sentence 2: what are they asking support to do about it?
    - Include concrete identifiers they supply (registration number, exam level,
      board, payment reference) when present — those drive resolution.
@@ -1637,17 +1648,19 @@ TASKS:
      a field that will not accept valid input, a missing dropdown option, a page
      that will not load, a validation that rejects a correct value.
    - A candidate not knowing HOW to do something is NOT a bug.
+   - A malfunction support has already confirmed fixed, and which the candidate
+     has not raised since, is not a live bug.
    - RIGHT: "Qualification dropdown has no 'Appearing' option for D.El.Ed 2026."
    - If none: return exactly "-".
 
 6) Language detection:
-   - List the languages the candidate wrote in, e.g. ["Hindi", "English"].
+   - List the languages the candidate wrote in across the conversation, e.g. ["Hindi", "English"].
    - Use "Hinglish" when Hindi is written in Roman script.
 
 7) Requested action:
    - One of exactly: "Correction" | "Information" | "Refund" | "Technical Fix" |
      "Document Upload" | "Status Update" | "Other".
-   - What the candidate wants done — independent of category.
+   - What the candidate wants done NOW — independent of category.
 
 ${taxonomyTask}${bugCategoryTaskNo}) Bug Category:
    - If bugs is not "-", assign a bug_category from this list: ${JSON.stringify(bugCategories)}
@@ -1658,14 +1671,13 @@ CATEGORIZATION SCHEMA:
 ${JSON.stringify(CATEGORIZATION_SCHEMA, null, 2)}
 
 ═══════════════════════════════════════════════════════
-THE EMAIL
+THE CONVERSATION
 ═══════════════════════════════════════════════════════
-Subject: ${email.subject || '(no subject)'}
-From:    ${email.from_name ? `${email.from_name} <${email.from_email || ''}>` : (email.from_email || '(unknown)')}
-Date:    ${email.received_at ? new Date(email.received_at).toISOString() : '(unknown)'}
-${attachmentNames.length ? `Attachments: ${attachmentNames.join(', ')}\n` : ''}
-Body:
-${trimmed || '(empty body)'}
+Candidate: ${participantName ? `${participantName} <${participantEmail}>` : (participantEmail || '(unknown)')}
+Messages:  ${ordered.length} total (${inbound.length} from the candidate)${omittedCount ? `, oldest ${omittedCount} omitted for length` : ''}
+${multi ? 'Latest' : 'Sent'}:    ${latest.received_at ? new Date(latest.received_at).toISOString() : '(unknown)'}
+
+${transcript || '(no readable content)'}
 
 OUTPUT FORMAT (must match exactly):
 {
@@ -1751,7 +1763,8 @@ OUTPUT FORMAT (must match exactly):
     const primary = tags[0] || scalarPair;
 
     logger.info('[EmailAI] Analysis complete', {
-      gmail_id: email.gmail_id,
+      conversation_id: participantEmail,
+      messages: ordered.length,
       category: primary.category,
       tags: tags.length,
       totalSec: ((Date.now() - startTime) / 1000).toFixed(1),
@@ -1775,15 +1788,39 @@ OUTPUT FORMAT (must match exactly):
       model_used:         result.model,
       used_fallback:      !!result.usedFallback,
       usage:              result.usage || null,
-      body_chars:         bodyText.length,
+      body_chars:         totalChars,
+      message_count:      ordered.length,
+      analysed_messages:  includedCount,
+      omitted_messages:   omittedCount,
     };
   }
 
   return { success: false, error: 'Max retries exceeded' };
 }
 
+/**
+ * Categorize ONE email on its own.
+ *
+ * A conversation of one — kept because a single message is still the shape the
+ * per-message re-analyse path and every existing caller hand over, and because
+ * routing it through the same code is what stops the two prompts from drifting
+ * apart.
+ *
+ * @param {object} email  As stored in the `emails` collection.
+ * @returns {Promise<object>} the same verdict shape categorizeConversation returns
+ */
+function categorizeEmail(email = {}, opts = {}, maxRetries = 3) {
+  return categorizeConversation(
+    { participant_email: email.from_email, participant_name: email.from_name },
+    [email],
+    opts,
+    maxRetries
+  );
+}
+
 module.exports = {
   categorizeRecording,
+  categorizeConversation,
   categorizeEmail,
   emailToPlainText,
   htmlToText,

@@ -40,6 +40,15 @@ function resolvePath(doc, path) {
   return current.length === 1 ? current[0] : current;
 }
 
+/**
+ * Run a test over an array field's elements, or over a scalar as itself.
+ * A missing field is tested as `undefined`, which is what makes `$ne` and
+ * `$nin` match documents that do not carry the field at all.
+ */
+function anyElement(value, test) {
+  return Array.isArray(value) ? value.some(test) : test(value);
+}
+
 function matches(doc, filter) {
   return Object.entries(filter).every(([key, cond]) => {
     if (key === '$and') return cond.every(c => matches(doc, c));
@@ -50,14 +59,24 @@ function matches(doc, filter) {
     if (cond && typeof cond === 'object' && !(cond instanceof Date) && !Array.isArray(cond)) {
       return Object.entries(cond).every(([op, arg]) => {
         switch (op) {
-          case '$ne':      return value !== arg;
-          case '$eq':      return value === arg;
+          // Equality operators apply ELEMENT-WISE to an array field: $eq/$in
+          // match when any element does, $ne/$nin when none does. Comparing the
+          // array itself would make `{label_ids: {$ne: 'SENT'}}` true of a
+          // message labelled SENT — which is how a reply we sent ends up
+          // counted as mail we received.
+          case '$ne':      return !anyElement(value, v => v === arg);
+          case '$eq':      return  anyElement(value, v => v === arg);
+          case '$in':      return  anyElement(value, v => arg.includes(v));
+          case '$nin':     return !anyElement(value, v => arg.includes(v));
           case '$gt':      return value >   arg;
           case '$gte':     return value >=  arg;
           case '$lt':      return value <   arg;
           case '$lte':     return value <=  arg;
-          case '$in':      return arg.includes(value);
-          case '$nin':     return !arg.includes(value);
+          // Mongo's $not negates an operator expression, and — the part that is
+          // easy to forget — a negation MATCHES a document missing the field
+          // entirely. That is exactly what "not replied to" has to mean for a
+          // rollup written before the counter existed.
+          case '$not':     return !matches(doc, { [key]: arg });
           case '$size':    return Array.isArray(value) && value.length === arg;
           case '$exists':  return (value !== undefined) === arg;
           // Every condition must hold on the SAME array element — the reason
@@ -88,7 +107,29 @@ function matches(doc, filter) {
   });
 }
 
+/**
+ * Real Mongo rejects an update whose operators name the same field twice —
+ * `$setOnInsert: { attempts: 0 }` beside `$set: { attempts: 0 }` fails the whole
+ * write, it does not merge. A fake that quietly merged them let a worker ship
+ * an enqueue that could never write, so the fake refuses it too, with the
+ * server's own wording.
+ */
+function assertNoPathConflict(update) {
+  const seen = new Map();
+  for (const [op, spec] of Object.entries(update)) {
+    if (!spec || typeof spec !== 'object') continue;
+    for (const path of Object.keys(spec)) {
+      const previous = seen.get(path);
+      if (previous && previous !== op) {
+        throw new Error(`Updating the path '${path}' would create a conflict at '${path}'`);
+      }
+      seen.set(path, op);
+    }
+  }
+}
+
 function applyUpdate(doc, update, { isInsert = false } = {}) {
+  assertNoPathConflict(update);
   const out = { ...doc };
 
   for (const [op, spec] of Object.entries(update)) {
@@ -197,6 +238,13 @@ function evalExpr(expr, doc) {
     case '$size': {
       const value = evalExpr(arg, doc);
       return Array.isArray(value) ? value.length : 0;
+    }
+    // The expression form, as used by $addFields to unwrap a $lookup result.
+    // Distinct from the $group accumulator of the same name, which is handled
+    // in the $group stage below.
+    case '$first': {
+      const value = evalExpr(arg, doc);
+      return Array.isArray(value) ? value[0] : value;
     }
     default: throw new Error(`fakeMongo: unsupported aggregation expression ${op}`);
   }
@@ -374,7 +422,12 @@ function createFakeDb(seed = {}, keyFor = (name, doc) => doc[DEFAULT_KEYS[name] 
 
       aggregate(pipeline = []) {
         const rows = runPipeline([...map.values()], pipeline, store);
-        return { toArray: () => Promise.resolve(rows) };
+        return {
+          toArray: () => Promise.resolve(rows),
+          // The export walks the cursor with `for await` rather than buffering
+          // it — a fake that only offers toArray() cannot exercise that path.
+          async *[Symbol.asyncIterator]() { for (const row of rows) yield row; },
+        };
       },
 
       findOne(filter = {}, opts = {}) {
@@ -384,6 +437,21 @@ function createFakeDb(seed = {}, keyFor = (name, doc) => doc[DEFAULT_KEYS[name] 
 
       countDocuments(filter = {}) {
         return Promise.resolve(select(filter).length);
+      },
+
+      /**
+       * Distinct values of one field across matching documents. Mongo flattens
+       * array fields into their elements and drops missing ones; the search
+       * path in lib/conversations depends on both.
+       */
+      distinct(field, filter = {}) {
+        const out = new Set();
+        for (const doc of select(filter)) {
+          const value = resolvePath(doc, field);
+          if (value === undefined) continue;
+          for (const item of Array.isArray(value) ? value : [value]) out.add(item);
+        }
+        return Promise.resolve([...out]);
       },
 
       insertOne(doc) {

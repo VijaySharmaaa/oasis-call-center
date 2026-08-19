@@ -4,6 +4,8 @@ import { useDateRange, useAgentMap } from '../hooks/useCalls';
 import TicketDetailModal, { STATUS_STYLE, PRIORITY_STYLE, fmtDate, Badge } from '../components/TicketDetailModal';
 import Pagination from '../components/Pagination';
 import ColorSelect from '../components/ColorSelect';
+import PageHeader from '../components/PageHeader';
+import { usePageChrome, usePageRefresh } from '../contexts/PageChromeContext';
 
 const API = import.meta.env.VITE_API_URL ?? '';
 
@@ -49,7 +51,9 @@ function SourceIcon({ ticket }) {
 
 export default function Tickets() {
   const { token, isAdmin } = useAuth();
-  const { minDate, maxDate } = useDateRange(token);
+  // maxDate is deliberately unused: the header caps "To" at whatever the
+  // operator picked, never at the newest record, so live arrivals stay visible.
+  const { minDate } = useDateRange(token);
   const agentMap = useAgentMap(token, isAdmin);
 
   const [tickets,        setTickets]        = useState([]);
@@ -62,13 +66,17 @@ export default function Tickets() {
   const [priorityFilter, setPriorityFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [sourceFilter,   setSourceFilter]   = useState('');
-  const [dateFrom,       setDateFrom]       = useState('');
-  const [dateTo,         setDateTo]         = useState('');
   const [selectedId,     setSelectedId]     = useState(null);
 
-  const effectiveFrom  = dateFrom || minDate;
-  const effectiveTo    = dateTo   || maxDate;
-  const isDateFiltered = !!(dateFrom || dateTo);
+  // The date range and the auto-refresh switch live in the common header.
+  const { dateFrom, dateTo } = usePageChrome();
+
+  const effectiveFrom  = dateFrom;
+  const effectiveTo    = dateTo;
+
+  // Narrowing the range while the operator sits on page 5 would otherwise land
+  // them on an empty page of a now-shorter list.
+  useEffect(() => { setPage(1); }, [dateFrom, dateTo]);
   const isFiltered     = !!(search || statusFilter || priorityFilter || categoryFilter || sourceFilter || dateFrom || dateTo);
 
   const load = useCallback(async (silent = false) => {
@@ -93,13 +101,8 @@ export default function Tickets() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-refresh every 5 seconds, only when tab is visible (silent — no spinner)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!document.hidden) load(true);
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // The header owns the timer and the manual refresh button.
+  usePageRefresh(load, 5000);
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
@@ -112,18 +115,11 @@ export default function Tickets() {
         />
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Tickets</h1>
-          <p className="text-sm text-slate-500 dark:text-zinc-500 mt-0.5">{total} {isFiltered ? 'filtered' : 'total'} tickets · auto-refreshes every 5s</p>
-        </div>
-        <button onClick={load} title="Refresh" className="w-9 h-9 flex items-center justify-center rounded-lg border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors self-start">
-          <svg className="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M13.5 8a5.5 5.5 0 11-1.1-3.3"/><path d="M13.5 2v3h-3"/>
-          </svg>
-        </button>
-      </div>
+      <PageHeader
+        title="Tickets"
+        subtitle={`${total} ${isFiltered ? 'filtered' : 'total'} tickets`}
+        minDate={minDate}
+      />
 
       {/* Filters row */}
       <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -186,38 +182,6 @@ export default function Tickets() {
           placeholder="All Sources"
           colorMap={SOURCE_COLORS}
         />
-        <svg className="w-4 h-4 text-slate-400 dark:text-zinc-500 shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M5 1v4M11 1v4M2 7h12"/></svg>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">From</label>
-          <input
-            type="date"
-            value={effectiveFrom}
-            max={effectiveTo}
-            onChange={e => { setDateFrom(e.target.value); setPage(1); }}
-            className="px-1.5 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-slate-400 dark:text-zinc-500 shrink-0">To</label>
-          <input
-            type="date"
-            value={effectiveTo}
-            min={effectiveFrom}
-            onChange={e => { setDateTo(e.target.value); setPage(1); }}
-            className="px-2 py-1.5 bg-white dark:bg-zinc-900 border border-slate-300 dark:border-zinc-600 rounded-lg text-xs text-slate-800 dark:text-zinc-200 focus:outline-none focus:border-indigo-500 transition-colors"
-          />
-        </div>
-        {isDateFiltered && (
-          <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setPage(1); }}
-            className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-zinc-600 text-xs text-slate-500 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-700 transition-colors"
-          >
-            Reset
-          </button>
-        )}
-        {isDateFiltered && (
-          <span className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">Filtered</span>
-        )}
       </div>
 
       {/* Table */}

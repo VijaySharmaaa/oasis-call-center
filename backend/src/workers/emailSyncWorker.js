@@ -24,7 +24,8 @@
  */
 const { getDb } = require('../db');
 const gmail     = require('../services/gmailService');
-const { enqueueEmail } = require('./emailAnalysisWorker');
+const { enqueueConversation } = require('./emailAnalysisWorker');
+const { conversationIdOf, refreshConversations, backfillConversationIds } = require('../lib/conversations');
 const logger    = require('../logger');
 
 const POLL_MS            = Math.max(15_000, Number(process.env.GMAIL_POLL_SEC || 60) * 1000);
@@ -32,6 +33,7 @@ const BACKFILL_DAYS      = Math.max(0, Number(process.env.GMAIL_BACKFILL_DAYS ??
 const PAGES_PER_TICK     = Math.max(1, Number(process.env.GMAIL_BACKFILL_PAGES_PER_TICK || 5));
 const FETCH_CONCURRENCY  = Math.max(1, Number(process.env.GMAIL_FETCH_CONCURRENCY || 8));
 const PAGE_SIZE          = 100;
+const CONVERSATION_BACKFILL_BATCH = 500;
 
 // Labels whose presence we mirror onto boolean fields for cheap filtering.
 const DERIVED_FLAGS = {
@@ -121,8 +123,13 @@ async function fetchAndStore(db, ids, mailbox) {
   } finally {
     if (docs.length) {
       const now = new Date();
+      // Which correspondent each message belongs to is decided here, at the
+      // point of storage, so every later query can group by a plain field
+      // instead of re-parsing headers.
+      const stamped = docs.map(doc => ({ ...doc, conversation_id: conversationIdOf(doc) }));
+
       await db.collection('emails').bulkWrite(
-        docs.map(doc => ({
+        stamped.map(doc => ({
           updateOne: {
             filter: { gmail_id: doc.gmail_id },
             update: {
@@ -135,19 +142,59 @@ async function fetchAndStore(db, ids, mailbox) {
         { ordered: false }
       );
 
-      // Hand each stored message to the analysis queue. enqueueEmail is
-      // idempotent, so a message re-fetched by a later history page does not
-      // re-run analysis that already completed. Failures here must not fail the
-      // sync — the worker's sweep stage picks up anything missed.
-      await Promise.all(docs.map(doc =>
-        enqueueEmail(doc.gmail_id).catch(err =>
-          logger.warn('[EmailSync] Could not queue analysis', { gmail_id: doc.gmail_id, message: err.message })
+      const conversationIds = [...new Set(stamped.map(d => d.conversation_id).filter(Boolean))];
+      await refreshConversations(db, conversationIds);
+
+      // Hand the affected CONVERSATIONS to the analysis queue — but only those
+      // whose rollup says they have heard something new since the last verdict.
+      // That distinction is what separates a reply (reopen the settled row and
+      // re-read the whole chain, hence force) from the same message arriving a
+      // second time down a later history page or a repeat backfill, which must
+      // not spend a Gemini call to reproduce a verdict we already hold.
+      // Failures here must not fail the sync — the worker's sweep picks up
+      // anything missed.
+      const stale = conversationIds.length
+        ? await db.collection('email_conversations')
+            .find({ _id: { $in: conversationIds }, needs_analysis: true }, { projection: { _id: 1 } })
+            .toArray()
+        : [];
+      await Promise.all(stale.map(({ _id }) =>
+        enqueueConversation(_id, { force: true }).catch(err =>
+          logger.warn('[EmailSync] Could not queue analysis', { conversation_id: _id, message: err.message })
         )
       ));
     }
   }
 
   return { stored: docs.length, failed };
+}
+
+/**
+ * Give stored mail that predates conversations the id it is grouped by, and
+ * build the rollups for it — a bounded batch per tick.
+ *
+ * This lives in the SYNC worker, not only in the analysis worker's sweep,
+ * because the Emails tab lists conversations and would otherwise be empty on
+ * any deployment running with EMAIL_ANALYSIS_ENABLED=false or no Gemini key.
+ * Grouping mail by who sent it is not an AI feature and must not depend on one.
+ */
+async function backfillConversations(db) {
+  const touched = await backfillConversationIds(db, CONVERSATION_BACKFILL_BATCH);
+  if (touched.length) await refreshConversations(db, touched);
+  return touched.length;
+}
+
+/**
+ * Recompute the rollups of whatever conversations these messages belong to.
+ * Label changes and deletions never touch the analysis — they change unread
+ * counts and whether a chain is still in the inbox, which lives on the rollup.
+ */
+async function refreshForMessages(db, gmailIds) {
+  if (!gmailIds.length) return;
+  const docs = await db.collection('emails')
+    .find({ gmail_id: { $in: gmailIds } }, { projection: { conversation_id: 1 } })
+    .toArray();
+  await refreshConversations(db, docs.map(d => d.conversation_id));
 }
 
 // ─── Backfill phase ───────────────────────────────────────────────────────────
@@ -267,10 +314,18 @@ async function applyLabelDeltas(db, labelDeltas) {
     // $addToSet and $pull cannot touch the same field in one update, so a
     // message with both kinds of change gets two ops.
     if (toAdd.length) {
-      ops.push({ updateOne: {
-        filter: { gmail_id },
-        update: { $addToSet: { label_ids: { $each: toAdd } }, $set: { ...flags, synced_at: new Date() } },
-      }});
+      const update = {
+        $addToSet: { label_ids: { $each: toAdd } },
+        $set: { ...flags, synced_at: new Date() },
+      };
+      // Somebody deliberately marked this unread in Gmail. Our own `read_at`
+      // would otherwise outvote them — unread means "unread there AND not
+      // opened here" — and the card would stay read however many times they
+      // tried. Read state is one fact now, and this is the direction that used
+      // to be missing from it.
+      if (labels.get('UNREAD') === true) update.$unset = { read_at: '', read_by: '' };
+
+      ops.push({ updateOne: { filter: { gmail_id }, update } });
     }
     if (toRemove.length) {
       ops.push({ updateOne: {
@@ -329,6 +384,11 @@ async function runIncremental(db, state, mailbox) {
 
   const relabelled = await applyLabelDeltas(db, labelDeltas);
 
+  // Both paths above change what a conversation looks like without adding text
+  // to it: a trashed message can empty a chain, and an unread label flip is the
+  // count the Emails tab leads with.
+  await refreshForMessages(db, [...deleted, ...labelDeltas.keys()]);
+
   await saveState(db, mailbox, { history_id: historyId, last_sync_at: new Date(), last_error: null });
   if (stored) await db.collection('email_sync_state').updateOne({ _id: mailbox }, { $inc: { synced_total: stored } });
 
@@ -357,6 +417,16 @@ async function syncOnce() {
 
   try {
     const db    = await getDb();
+
+    // Before anything else: mail already in the database that has never been
+    // grouped. Failing this must not fail the sync — new mail still arrives,
+    // and the next tick tries again.
+    try {
+      await backfillConversations(db);
+    } catch (err) {
+      logger.warn('[EmailSync] Conversation backfill failed', { message: err.message });
+    }
+
     const state = await loadState(db, mailbox);
     // history.list is useless without a start id — treat a missing one as a
     // signal to rebuild from scratch rather than crashing every tick.

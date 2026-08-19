@@ -4,6 +4,10 @@ const path = require('path');
 const { once } = require('events');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('../db');
+const { buildConversationFilter } = require('../lib/conversations');
+const {
+  normaliseSource, buildCallAnalysisFilter, buildEmailAnalysisFilter,
+} = require('../lib/analysisFilters');
 const logger = require('../logger');
 
 const JOBS_COLLECTION = 'call_export_jobs';
@@ -19,6 +23,14 @@ function getExportDir() {
 
 function toDayToken(value) {
   if (!value) return '';
+  // A filter boundary arrives as the operator wrote it — "2026-08-01T00:00",
+  // with no zone. Date would read that as local time and toISOString would then
+  // shift it into UTC, so anywhere east of UTC every export was named after the
+  // day BEFORE the one that was picked. The date is already the answer; take it
+  // literally rather than round-tripping it through a timezone.
+  const literal = String(value).match(/^(\d{4}-\d{2}-\d{2})(?:[T ]|$)/);
+  if (literal) return literal[1];
+
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
   return d.toISOString().slice(0, 10);
@@ -66,6 +78,17 @@ function normalizeFilters(raw = {}) {
     callCategory: pick('callCategory'),
     bugCategory: pick('bugCategory'),
     bugsOnly: pick('bugsOnly'),
+    // Conversation-specific filters. Each export type reads only the keys it
+    // knows; carrying them all through one normaliser is what stops a filter
+    // the operator set on screen from being silently dropped on the way to the
+    // job document.
+    subCategory: pick('subCategory'),
+    analysisStatus: pick('analysisStatus'),
+    unread: pick('unread'),
+    hasAttachments: pick('hasAttachments'),
+    includeTrashed: pick('includeTrashed'),
+    // Which queues the AI Analysis tab was showing when the export was asked for.
+    source: pick('source'),
   };
 }
 
@@ -384,6 +407,237 @@ function buildAnalysisFileName(filters = {}) {
   return `${parts.join('-')}.csv`;
 }
 
+// ─── Conversations export type ───────────────────────────────────────────────
+//
+// One row per CORRESPONDENT, which is what the Emails tab lists: a candidate
+// who wrote six times about one refund is one row carrying one verdict, not six
+// rows repeating it. The filter comes from lib/conversations — the same
+// function the screen uses — so the CSV can never select a different set than
+// the list it was exported from.
+
+function buildConversationsPipeline(filter) {
+  return [
+    { $match: filter },
+    { $sort: { last_message_at: -1 } },
+    {
+      // The rollup mirrors the headline verdict, but language and the model
+      // that produced it live only on the analysis record.
+      $lookup: {
+        from: 'conversation_analysis',
+        localField: '_id',
+        foreignField: '_id',
+        as: 'analysis_doc',
+      },
+    },
+    { $addFields: { analysis: { $first: '$analysis_doc' } } },
+    { $project: { analysis_doc: 0 } },
+  ];
+}
+
+function conversationsToCsvRecord(doc) {
+  const a = doc.analysis || {};
+  return {
+    'Sender Name':      doc.participant_name || '',
+    'Sender Email':     doc.participant_email || doc._id || '',
+    'Messages':         doc.message_count ?? '',
+    'From Candidate':   doc.inbound_count ?? '',
+    'From Support':     doc.outbound_count ?? '',
+    'Unread':           doc.unread_count ?? 0,
+    'First Message':    formatDate(doc.first_message_at),
+    'Last Message':     formatDate(doc.last_message_at),
+    'Latest Subject':   doc.last_subject || '',
+    // Candidates start fresh threads for the same problem, so the other
+    // subjects they used are worth carrying — that is the whole reason these
+    // rows are keyed by person rather than by thread.
+    'Other Subjects':   (doc.subjects || []).filter(sub => sub !== doc.last_subject).join('; '),
+    'Category':         doc.category || '',
+    'Sub-Category':     doc.sub_category && doc.sub_category !== '-' ? doc.sub_category : '',
+    'Tags':             formatTags(doc.tags),
+    'AI Insight':       doc.ai_insight || '',
+    'Summary':          normalizeMultiline(doc.summary || a.summary),
+    'Requested Action': doc.requested_action || a.requested_action || '',
+    'Bug Category':     doc.bug_category || a.bug_category || '',
+    'Bug Description':  doc.bugs || a.bugs || '',
+    'Language':         Array.isArray(a.language) ? a.language.join(', ') : (a.language || ''),
+    'Attachments':      doc.has_attachments ? 'Yes' : 'No',
+    'Threads':          (doc.thread_ids || []).length,
+    // "Outstanding" is not the same as "never analysed": a chain analysed last
+    // week that has had a reply since is outstanding again.
+    'Analysis Status':  doc.needs_analysis ? 'Outstanding' : (doc.analysis_status || a.status || ''),
+    'Analysed At':      formatDate(doc.analysed_at),
+    'Model':            a.model_used || '',
+  };
+}
+
+function buildConversationsFileName(filters = {}) {
+  const from = toDayToken(filters.dateFrom) || 'all';
+  const to = toDayToken(filters.dateTo) || 'today';
+  const parts = ['email-report', `${from}-to-${to}`];
+  const cat = slugPart(filters.category, 24);
+  if (cat) parts.push(cat);
+  if (filters.unread === 'true') parts.push('unread');
+  return `${parts.join('-')}.csv`;
+}
+
+/**
+ * The AI Analysis tab exports what is on screen, and that tab now lists two
+ * queues. Calls alone keep their own long-standing CSV (the `analysis` type
+ * above) so nobody's saved column layout changes underneath them; asking for
+ * mail — alone or beside the calls — produces this one instead.
+ *
+ * Every row is a verdict, so the columns are the union of what a verdict can
+ * carry, with a Source column saying which queue produced it. The fields that
+ * only one side has (an agent score, a message count) are simply blank on the
+ * other, which is the honest rendering: absent, not zero.
+ */
+const MIXED_ANALYSIS_HEADERS = [
+  'Source', 'Reference', 'Category', 'Sub-Category', 'AI Insight', 'Tags', 'Summary',
+  'Bug Category', 'Bug Description', 'Requested Action',
+  'Call Resolved', 'Agent Score', 'Audio Rating', 'Language',
+  'Caller / Sender', 'Agent Number', 'Messages', 'Duration (s)', 'Recording', 'Date',
+];
+
+/**
+ * Both filters plus the source, carried together: streamCsv hands whatever
+ * buildFilter returns straight to buildPipeline, so a type that reads two
+ * collections can carry two filters.
+ */
+function buildMixedAnalysisFilter(filters) {
+  return {
+    source: normaliseSource(filters?.source),
+    call:   buildCallAnalysisFilter(filters),
+    email:  buildEmailAnalysisFilter(filters),
+  };
+}
+
+/** Which collection the pipeline starts on — the union is written from there. */
+function mixedAnalysisCollection(spec) {
+  return spec.source === 'emails' ? 'conversation_analysis' : 'call_analysis';
+}
+
+/** The call queue, projected into the shared row shape. */
+function mixedCallStages(filter, user) {
+  const stages = [
+    { $match: filter },
+    { $lookup: { from: 'calls', localField: 'call_id', foreignField: 'call_id', as: 'call_doc' } },
+    { $addFields: { call: { $first: '$call_doc' } } },
+  ];
+  // Same scoping the calls-only export applies: an agent exports their own work.
+  // Mail carries no agent at all — a shared mailbox is not anybody's queue — so
+  // the email branch below is deliberately not scoped this way.
+  if (user?.role === 'agent' && user?.agent_number) {
+    stages.push({ $match: { 'call.agent_number': user.agent_number } });
+  }
+  stages.push({
+    $project: {
+      _id: 0,
+      _source:      'Call',
+      reference:    '$call_id',
+      category:     '$call_category',
+      sub_category: { $cond: [{ $in: ['$call_sub_category', [null, '', '-']] }, '$sub_category', '$call_sub_category'] },
+      ai_insight:   1,
+      tags:         1,
+      summary:      1,
+      bug_category: 1,
+      bugs:         1,
+      requested_action: null,
+      call_resolved: 1,
+      agent_score:   1,
+      audio_rating:  '$audio_quality.rating',
+      language:      1,
+      party:         '$call.caller_number',
+      agent_number:  '$call.agent_number',
+      message_count: null,
+      duration:      '$call.duration',
+      recording:     '$call.call_recording',
+      date:          { $ifNull: ['$call.call_start_time', '$created_at'] },
+      sort_at:       '$created_at',
+    },
+  });
+  return stages;
+}
+
+/** The mail queue, projected into the same shape. */
+function mixedEmailStages(filter) {
+  return [
+    { $match: filter },
+    { $lookup: { from: 'email_conversations', localField: '_id', foreignField: '_id', as: 'conv_doc' } },
+    { $addFields: { conv: { $first: '$conv_doc' } } },
+    {
+      $project: {
+        _id: 0,
+        _source:      'Email',
+        reference:    { $ifNull: ['$conv.participant_email', '$_id'] },
+        category:     { $ifNull: ['$email_category', '$category'] },
+        sub_category: { $cond: [{ $in: ['$email_sub_category', [null, '', '-']] }, '$sub_category', '$email_sub_category'] },
+        ai_insight:   1,
+        tags:         1,
+        summary:      1,
+        bug_category: 1,
+        bugs:         1,
+        requested_action: 1,
+        call_resolved: null,
+        agent_score:   null,
+        audio_rating:  null,
+        language:      1,
+        party:         { $ifNull: ['$conv.participant_name', '$conv.participant_email'] },
+        agent_number:  null,
+        message_count: '$message_count',
+        duration:      null,
+        recording:     null,
+        date:          { $ifNull: ['$conv.last_message_at', '$created_at'] },
+        sort_at:       '$created_at',
+      },
+    },
+  ];
+}
+
+function buildMixedAnalysisPipeline(spec, user) {
+  if (spec.source === 'emails') {
+    return [...mixedEmailStages(spec.email), { $sort: { sort_at: -1 } }];
+  }
+  return [
+    ...mixedCallStages(spec.call, user),
+    { $unionWith: { coll: 'conversation_analysis', pipeline: mixedEmailStages(spec.email) } },
+    { $sort: { sort_at: -1 } },
+  ];
+}
+
+function mixedAnalysisToCsvRecord(doc) {
+  return {
+    'Source':           doc._source || '',
+    'Reference':        doc.reference || '',
+    'Category':         doc.category || '',
+    'Sub-Category':     doc.sub_category && doc.sub_category !== '-' ? doc.sub_category : '',
+    'AI Insight':       doc.ai_insight && doc.ai_insight !== '-' ? doc.ai_insight : '',
+    'Tags':             formatTags(doc.tags),
+    'Summary':          normalizeMultiline(doc.summary),
+    'Bug Category':     doc.bug_category && doc.bug_category !== '-' ? doc.bug_category : '',
+    'Bug Description':  doc.bugs && doc.bugs !== '-' ? doc.bugs : '',
+    'Requested Action': doc.requested_action || '',
+    'Call Resolved':    doc.call_resolved || '',
+    'Agent Score':      doc.agent_score ?? '',
+    'Audio Rating':     doc.audio_rating || '',
+    'Language':         Array.isArray(doc.language) ? doc.language.join(', ') : (doc.language || ''),
+    'Caller / Sender':  doc.party || '',
+    'Agent Number':     doc.agent_number || '',
+    'Messages':         doc.message_count ?? '',
+    'Duration (s)':     doc.duration ?? '',
+    'Recording':        doc.recording || '',
+    'Date':             formatDate(doc.date),
+  };
+}
+
+function buildMixedAnalysisFileName(filters = {}) {
+  const from = toDayToken(filters.dateFrom) || 'all';
+  const to = toDayToken(filters.dateTo) || 'today';
+  const source = normaliseSource(filters.source);
+  const parts = ['ai-analysis', source === 'emails' ? 'emails' : 'calls-and-emails', `${from}-to-${to}`];
+  const cat = slugPart(filters.callCategory || filters.category, 20);
+  if (cat) parts.push(cat);
+  return `${parts.join('-')}.csv`;
+}
+
 // ─── Export type registry ────────────────────────────────────────────────────
 
 const EXPORT_TYPES = {
@@ -416,6 +670,30 @@ const EXPORT_TYPES = {
     toRecord: analysisToCsvRecord,
     buildFileName: buildAnalysisFileName,
   },
+  analysisMixed: {
+    collection: mixedAnalysisCollection,
+    headers: MIXED_ANALYSIS_HEADERS,
+    buildFilter: buildMixedAnalysisFilter,
+    buildPipeline: buildMixedAnalysisPipeline,
+    toRecord: mixedAnalysisToCsvRecord,
+    buildFileName: buildMixedAnalysisFileName,
+  },
+  conversations: {
+    collection: 'email_conversations',
+    headers: [
+      'Sender Name', 'Sender Email', 'Messages', 'From Candidate', 'From Support', 'Unread',
+      'First Message', 'Last Message', 'Latest Subject', 'Other Subjects',
+      'Category', 'Sub-Category', 'Tags', 'AI Insight', 'Summary', 'Requested Action',
+      'Bug Category', 'Bug Description', 'Language', 'Attachments', 'Threads',
+      'Analysis Status', 'Analysed At', 'Model',
+    ],
+    // Async, unlike the call builders: a free-text search has to resolve
+    // message bodies to the conversations they belong to before it can filter.
+    buildFilter: (filters, user, db) => buildConversationFilter(db, filters),
+    buildPipeline: buildConversationsPipeline,
+    toRecord: conversationsToCsvRecord,
+    buildFileName: buildConversationsFileName,
+  },
 };
 
 async function streamCsv({ db, type = 'calls', filters, user, writable, onProgress }) {
@@ -424,9 +702,15 @@ async function streamCsv({ db, type = 'calls', filters, user, writable, onProgre
 
   await writeLine(writable, def.headers.map(csvEscape).join(',') + '\r\n');
 
-  const filter = def.buildFilter(filters, user);
+  // Awaited so a type may build its filter asynchronously — the conversations
+  // export does, because a body search is a query of its own. The call builders
+  // return plain objects and are unaffected.
+  const filter = await def.buildFilter(filters, user, db);
   const pipeline = def.buildPipeline(filter, user);
-  const cursor = db.collection(def.collection).aggregate(pipeline, {
+  // A type that reads two collections picks its starting one from the filter —
+  // the mixed analysis export begins on whichever queue it is unioning from.
+  const collection = typeof def.collection === 'function' ? def.collection(filter) : def.collection;
+  const cursor = db.collection(collection).aggregate(pipeline, {
     allowDiskUse: true,
     batchSize: 300,
   });

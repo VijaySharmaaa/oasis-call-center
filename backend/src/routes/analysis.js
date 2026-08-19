@@ -8,6 +8,9 @@ const { createExportJob, getExportJob } = require('../workers/exportWorker');
 const { detectTranscriptionLoop, generateCategoryTaxonomy, generaliseCategoryTaxonomy } = require('../services/geminiService');
 const { dynamicCategoriesEnabled } = require('../config/features');
 const { tagMatch } = require('../lib/tags');
+const {
+  normaliseSource, buildCallAnalysisFilter, buildEmailAnalysisFilter,
+} = require('../lib/analysisFilters');
 
 const router = express.Router();
 
@@ -73,6 +76,7 @@ function pickAnalysisExportFilters(src = {}) {
     bugsOnly: pick('bugsOnly'),
     dateFrom: pick('dateFrom'),
     dateTo: pick('dateTo'),
+    source: pick('source'),
   };
 }
 
@@ -173,9 +177,15 @@ router.get('/queue-stats', requireAdmin, async (req, res) => {
 });
 
 // POST /api/analysis/export/jobs — queue async export
+//
+// The CSV follows the source the tab is showing, because an export that
+// disagrees with the screen it was taken from is worse than no export. Calls
+// alone keep the long-standing call-analysis CSV, column for column; asking for
+// mail — alone or beside the calls — produces the mixed one.
 router.post('/export/jobs', async (req, res) => {
   const filters = pickAnalysisExportFilters(req.body || {});
-  const jobId = await createExportJob({ filters, user: req.user, type: 'analysis' });
+  const type = normaliseSource(filters.source) === 'calls' ? 'analysis' : 'analysisMixed';
+  const jobId = await createExportJob({ filters, user: req.user, type });
   res.status(202).json({ job_id: jobId, status: 'pending' });
 });
 
@@ -815,67 +825,90 @@ router.get('/:call_id', async (req, res) => {
   res.json(doc);
 });
 
-// GET /api/analysis — paginated list with search/filter + joined call data
-router.get('/', async (req, res) => {
-  const db = await getDb();
-  const { status, category, search, limit = '25', offset = '0', dateFrom, dateTo, sortBy, sortDir, bugsOnly, bugCategory, callCategory } = req.query;
+// ─── The AI Analysis list ─────────────────────────────────────────────────────
+//
+// Two queues produce verdicts — recordings and mail — and this tab is where an
+// operator reads them. They stay in separate collections because the work is
+// different (audio versus text, one call versus a whole correspondence), but a
+// VERDICT has the same shape either way: a category, tags, an insight, a bug.
+// So the list serves both side by side, each row tagged with where it came from.
+//
+// `source` picks which queues to read: all (the default), calls, or emails.
+// The filters themselves live in lib/analysisFilters, because the CSV export
+// builds them from the same functions.
 
-  const conditions = [{ status: 'completed' }];
-  if (bugsOnly) conditions.push({ bugs: { $exists: true, $nin: ['', '-'] } });
-  if (bugCategory) conditions.push({ bug_category: bugCategory });
-  if (callCategory) conditions.push({ call_category: callCategory });
-  // Matches the category on ANY tag, so a call whose second issue was Billing
-  // is found by a Billing filter. Sentinels are never tagged, so they keep
-  // matching through the scalar arm of tagMatch.
-  if (category) conditions.push(tagMatch(category));
-  if (search)   conditions.push({ $or: [
-    { call_id:          { $regex: search, $options: 'i' } },
-    { category:         { $regex: search, $options: 'i' } },
-    { sub_category:     { $regex: search, $options: 'i' } },
-    { 'tags.category':  { $regex: search, $options: 'i' } },
-    { 'tags.sub_category': { $regex: search, $options: 'i' } },
-    { ai_insight:       { $regex: search, $options: 'i' } },
-  ]});
-  if (dateFrom || dateTo) {
-    const dc = {};
-    if (dateFrom) dc.$gte = new Date(dateFrom);
-    if (dateTo)   dc.$lte = new Date(dateTo);
-    conditions.push({ created_at: dc });
+const CALL_SORT_FIELDS = {
+  bugs: 'bugs', bug_category: 'bug_category', call_category: 'call_category',
+  call_resolved: 'call_resolved', agent_score: 'agent_score',
+  audio_quality: 'audio_quality.rating', created_at: 'created_at',
+};
+
+/** The mail queue can only be ordered by the keys it actually has. */
+const EMAIL_SORT_FIELDS = {
+  bugs: 'bugs', bug_category: 'bug_category', call_category: 'email_category',
+  created_at: 'created_at',
+};
+
+/**
+ * The value a merged list sorts on, read off a normalised row.
+ *
+ * Only the shared keys can order both sources. A call-only key — a score, an
+ * audio rating, a recording's length — leaves every mail row undefined, and
+ * undefined pins to the bottom, which is the same rule the single-source query
+ * already applies to calls with no recording. Sorting by score therefore lists
+ * the scored rows first and the mail after, which is the honest reading of that
+ * request rather than an interleaving of values that do not exist.
+ */
+function sortValue(row, sortBy) {
+  switch (sortBy) {
+    case 'call_category': return row.primary_category;
+    case 'bug_category':  return row.bug_category;
+    case 'bugs':          return row.bugs;
+    case 'call_resolved': return row.call_resolved;
+    case 'agent_score':   return row.agent_score;
+    case 'audio_quality': return row.audio_quality?.rating;
+    case 'recording':     return row.call?.call_recording ? (row.call?.duration ?? 0) : undefined;
+    default:              return row.created_at;
   }
+}
 
-  const filter = { $and: conditions };
+function isEmptyValue(v) {
+  return v === undefined || v === null || v === '';
+}
 
-  const SORT_FIELDS = { bugs: 'bugs', bug_category: 'bug_category', call_category: 'call_category', call_resolved: 'call_resolved', agent_score: 'agent_score', audio_quality: 'audio_quality.rating', created_at: 'created_at' };
+/** Newest / highest first unless asked otherwise; missing values always last. */
+function mergeComparator(sortBy, sortDir) {
+  const order = sortDir === 'asc' ? 1 : -1;
+  return (a, b) => {
+    const av = sortValue(a, sortBy);
+    const bv = sortValue(b, sortBy);
+    if (isEmptyValue(av) !== isEmptyValue(bv)) return isEmptyValue(av) ? 1 : -1;
+    if (isEmptyValue(av)) return 0;
+    if (av < bv) return -order;
+    if (av > bv) return  order;
+    return 0;
+  };
+}
+
+/** One page of call verdicts, with the call each belongs to joined on. */
+async function fetchCallAnalyses(db, { filter, sortBy, sortDir, skip, limit }) {
   const sortOrder = sortDir === 'asc' ? 1 : -1;
-
-  // Sort by recording length lives on the joined `calls` collection (duration
-  // field), so we need an aggregation path. Other sorts stay on the simpler
-  // find().sort() to avoid the lookup overhead. Both paths produce the same
-  // shape: an array of call_analysis docs (sans _id).
   let docs, total;
+
+  // Sorting by recording length reads `duration` off the joined `calls`
+  // collection, so that one case needs an aggregation. The rest stay on
+  // find().sort() to avoid paying for a lookup that changes nothing.
   if (sortBy === 'recording') {
     const pipeline = [
       { $match: filter },
-      {
-        $lookup: {
-          from: 'calls',
-          localField: 'call_id',
-          foreignField: 'call_id',
-          as: '_call',
-        },
-      },
+      { $lookup: { from: 'calls', localField: 'call_id', foreignField: 'call_id', as: '_call' } },
       { $unwind: { path: '$_call', preserveNullAndEmptyArrays: true } },
       {
         $addFields: {
           // "Has recording" pins to the bottom regardless of asc/desc.
           _hasVal: {
             $cond: [
-              {
-                $and: [
-                  { $ne: ['$_call.call_recording', null] },
-                  { $ne: ['$_call.call_recording', ''] },
-                ],
-              },
+              { $and: [{ $ne: ['$_call.call_recording', null] }, { $ne: ['$_call.call_recording', ''] }] },
               1, 0,
             ],
           },
@@ -883,8 +916,8 @@ router.get('/', async (req, res) => {
         },
       },
       { $sort: { _hasVal: -1, _dur: sortOrder, _id: -1 } },
-      { $skip: Number(offset) },
-      { $limit: Number(limit) },
+      { $skip: skip },
+      { $limit: limit },
       { $project: { _id: 0, _hasVal: 0, _dur: 0, _call: 0 } },
     ];
     [docs, total] = await Promise.all([
@@ -892,15 +925,14 @@ router.get('/', async (req, res) => {
       db.collection('call_analysis').countDocuments(filter),
     ]);
   } else {
-    const sortField = SORT_FIELDS[sortBy] ?? 'created_at';
+    const sortField = CALL_SORT_FIELDS[sortBy] ?? 'created_at';
     [docs, total] = await Promise.all([
       db.collection('call_analysis').find(filter, { projection: { _id: 0 } })
-        .sort({ [sortField]: sortOrder }).skip(Number(offset)).limit(Number(limit)).toArray(),
+        .sort({ [sortField]: sortOrder }).skip(skip).limit(limit).toArray(),
       db.collection('call_analysis').countDocuments(filter),
     ]);
   }
 
-  // Join call data (caller, called, agent, duration, start time)
   const callIds  = docs.map(d => d.call_id);
   const callDocs = callIds.length
     ? await db.collection('calls').find({ call_id: { $in: callIds } },
@@ -909,7 +941,101 @@ router.get('/', async (req, res) => {
     : [];
   const callMap = Object.fromEntries(callDocs.map(c => [c.call_id, c]));
 
-  const analyses = docs.map(d => ({ ...d, call: callMap[d.call_id] || null }));
+  return {
+    total,
+    rows: docs.map(d => ({
+      ...d,
+      source: 'call',
+      id: d.call_id,
+      // What the Category column renders, whichever queue the row came from.
+      primary_category: d.call_category,
+      call: callMap[d.call_id] || null,
+    })),
+  };
+}
+
+/** One page of mail verdicts, with the correspondence each belongs to joined on. */
+async function fetchEmailAnalyses(db, { filter, sortBy, sortDir, skip, limit }) {
+  const sortOrder = sortDir === 'asc' ? 1 : -1;
+  const sortField = EMAIL_SORT_FIELDS[sortBy] ?? 'created_at';
+
+  const [docs, total] = await Promise.all([
+    db.collection('conversation_analysis').find(filter)
+      .sort({ [sortField]: sortOrder }).skip(skip).limit(limit).toArray(),
+    db.collection('conversation_analysis').countDocuments(filter),
+  ]);
+
+  const ids = docs.map(d => d._id);
+  const convDocs = ids.length
+    ? await db.collection('email_conversations').find({ _id: { $in: ids } },
+        { projection: { participant_email:1, participant_name:1, last_subject:1, message_count:1, inbound_count:1, unread_count:1, last_message_at:1 } }
+      ).toArray()
+    : [];
+  const convMap = Object.fromEntries(convDocs.map(c => [c._id, c]));
+
+  return {
+    total,
+    // processing_id is queue bookkeeping, not a verdict — the same reason the
+    // conversation detail endpoint projects it away.
+    rows: docs.map(({ _id, processing_id, ...d }) => {
+      const conv = convMap[_id] || null;
+      return {
+        ...d,
+        source: 'email',
+        id: _id,
+        conversation_id: d.conversation_id || _id,
+        primary_category: d.email_category || d.category,
+        // Named `email` to sit beside a call row's `call`: the thing the verdict
+        // is about, joined on for the columns that describe it.
+        email: { participant_email: _id, ...(conv || {}) },
+      };
+    }),
+  };
+}
+
+// GET /api/analysis — paginated list of verdicts from both queues
+router.get('/', async (req, res) => {
+  const db = await getDb();
+  const {
+    category, search, limit = '25', offset = '0', dateFrom, dateTo,
+    sortBy, sortDir, bugsOnly, bugCategory, callCategory, source: rawSource,
+  } = req.query;
+
+  const source   = normaliseSource(rawSource);
+  const pageSize = Math.min(200, Math.max(1, Number(limit) || 25));
+  const skip     = Math.max(0, Number(offset) || 0);
+
+  const shared      = { search, category, bugsOnly, bugCategory, callCategory, dateFrom, dateTo };
+  const callFilter  = buildCallAnalysisFilter(shared);
+  const emailFilter = buildEmailAnalysisFilter(shared);
+
+  let analyses, total, counts;
+
+  if (source === 'calls' || source === 'emails') {
+    // One queue: page it in the database, exactly as this endpoint always has.
+    const fetchPage = source === 'calls' ? fetchCallAnalyses : fetchEmailAnalyses;
+    const page = await fetchPage(db, {
+      filter: source === 'calls' ? callFilter : emailFilter,
+      sortBy, sortDir, skip, limit: pageSize,
+    });
+    analyses = page.rows;
+    total    = page.total;
+    counts   = { calls: source === 'calls' ? page.total : 0, emails: source === 'emails' ? page.total : 0 };
+  } else {
+    // Both: each queue is read to the same depth and the two are merged here.
+    // Taking `skip + pageSize` from each is what makes the merge exact — the
+    // page cannot contain a row that sorts below something left unfetched.
+    const take = skip + pageSize;
+    const [calls, emails] = await Promise.all([
+      fetchCallAnalyses(db,  { filter: callFilter,  sortBy, sortDir, skip: 0, limit: take }),
+      fetchEmailAnalyses(db, { filter: emailFilter, sortBy, sortDir, skip: 0, limit: take }),
+    ]);
+    analyses = [...calls.rows, ...emails.rows]
+      .sort(mergeComparator(sortBy, sortDir))
+      .slice(skip, skip + pageSize);
+    total  = calls.total + emails.total;
+    counts = { calls: calls.total, emails: emails.total };
+  }
 
   // Distinct categories for filter dropdown
   const [categories, bugCategories, callCategories] = await Promise.all([
@@ -935,7 +1061,7 @@ router.get('/', async (req, res) => {
   }
 
   res.json({
-    analyses, total,
+    analyses, total, counts, source,
     categories: categories.sort(),
     bugCategories: bugCategoryNames,
     callCategories: callCategoryNames,

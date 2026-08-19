@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import AudioPlayer from './AudioPlayer';
 import TranscriptionModal from './TranscriptionModal';
-import TagChips from './TagChips';
+import TagChips, { tagsOf } from './TagChips';
+import AnalysisStatus, { analysisStateOf } from './AnalysisStatus';
 import { initiateCall, pollClick2Call } from '../hooks/useCalls';
 
 const SYSTEM_NUMBER = '8037126236';
@@ -98,7 +99,7 @@ function resolveStation(number, stationMap) {
   return null;
 }
 
-export default function CallsTable({ calls, hasFilters = false, isAgent = false, agentNumber, agentMap = {}, stationMap = {}, token, onCreateTicket, sortBy, sortDir, onSort }) {
+export default function CallsTable({ calls, hasFilters = false, isAgent = false, agentNumber, agentMap = {}, stationMap = {}, token, onCreateTicket, onAnalysisQueued, sortBy, sortDir, onSort }) {
   const [transcriptCall, setTranscriptCall] = useState(null);
   const [dialState,      setDialState]      = useState({});  // { [call.id]: 'loading'|'success'|'error' }
 
@@ -327,6 +328,15 @@ export default function CallsTable({ calls, hasFilters = false, isAgent = false,
               </div>
             )}
 
+            {/* Queue state sits outside the block above, because the rows that
+                most need it are exactly the ones with no category yet. */}
+            <AnalysisStatus
+              item={call}
+              analyseUrl={`/api/calls/${encodeURIComponent(call.call_id)}/analyse`}
+              onQueued={onAnalysisQueued}
+              className="mb-3"
+            />
+
             {/* Recording + Transcription + Ticket + Delete */}
             <div className="flex items-center gap-2">
               {onCreateTicket && (
@@ -445,7 +455,20 @@ export default function CallsTable({ calls, hasFilters = false, isAgent = false,
                       <DialBtn call={call} />
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-xs max-w-[220px]"><TagChips item={call} max={2} /></td>
+                  <td className="px-3 py-2 text-xs max-w-[220px]">
+                    {/* A call with no verdict yet shows its queue state in place
+                        of TagChips' bare "pending", which says less and offers
+                        nothing to press. */}
+                    {tagsOf(call).length > 0
+                      ? <TagChips item={call} max={2} />
+                      : !analysisStateOf(call) && <span className="text-slate-300 dark:text-zinc-600">—</span>}
+                    <AnalysisStatus
+                      item={call}
+                      analyseUrl={`/api/calls/${encodeURIComponent(call.call_id)}/analyse`}
+                      onQueued={onAnalysisQueued}
+                      className="mt-1"
+                    />
+                  </td>
                   <td className="px-3 py-2 text-slate-600 dark:text-zinc-300 text-xs whitespace-nowrap">{call.sub_category || '—'}</td>
                   <td className="px-3 py-2 min-w-[200px]">
                     {call.call_recording && call.agent_answer_time ? (

@@ -30,6 +30,14 @@ jest.mock('../src/workers/exportWorker', () => ({
   streamCsv:       jest.fn(),
 }));
 
+// Queueing is the analysis worker's job; here we only care that the route asks
+// it for the right thing.
+const mockEnqueueRecording = jest.fn(() => Promise.resolve(true));
+jest.mock('../src/workers/analysisWorker', () => ({
+  startWorker:      jest.fn(),
+  enqueueRecording: (...args) => mockEnqueueRecording(...args),
+}));
+
 /** Calls as the webhook stores them, newest first by created_at. */
 const SEED_CALLS = [
   { _id: 'id-answered', call_id: 'BZ-1', caller_number: '919876543210', called_number: '918037126236',
@@ -70,7 +78,15 @@ const agentToken = jwt.sign({ name: 'Ravi Kumar', role: 'agent', agent_number: '
 let app;
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFake = createFakeDb({ calls: SEED_CALLS, agents: SEED_AGENTS });
+  mockFake = createFakeDb({
+    calls: SEED_CALLS,
+    agents: SEED_AGENTS,
+    // BZ-1 has a verdict; BZ-3 has a recording nobody has read yet. BZ-2 and
+    // BZ-4 have no recording at all, so they are not analysable work.
+    call_analysis: [
+      { call_id: 'BZ-1', status: 'completed', category: 'Payment & Fee', attempts: 0 },
+    ],
+  });
   app = express();
   app.use(express.json());
   app.use('/api/calls', require('../src/routes/calls'));
@@ -227,5 +243,96 @@ describe('role scoping', () => {
     const res = await get('/api/calls', agentToken).expect(200);
     expect(res.body.total).toBe(res.body.calls.length);
     expect(res.body.total).toBeLessThan(4);
+  });
+});
+
+/**
+ * The Call Report cannot tell "the AI found nothing to tag" apart from "the AI
+ * has not read this yet" without these two fields — and only the second is a
+ * state an operator can do something about.
+ */
+describe('analysis state on the list', () => {
+  const byCallId = res => Object.fromEntries(res.body.calls.map(c => [c.call_id, c]));
+
+  it('marks a recording with no verdict as awaiting analysis', async () => {
+    const call = byCallId(await get('/api/calls').expect(200))['BZ-3'];
+    expect(call.awaiting_analysis).toBe(true);
+    expect(call.queue_status).toBeNull();     // never enrolled
+  });
+
+  it('does not mark an analysed call as awaiting', async () => {
+    const call = byCallId(await get('/api/calls').expect(200))['BZ-1'];
+    expect(call.awaiting_analysis).toBe(false);
+    expect(call.queue_status).toBe('completed');
+  });
+
+  it('never marks a call with no recording as awaiting — there is nothing to read', async () => {
+    const call = byCallId(await get('/api/calls').expect(200))['BZ-2'];
+    expect(call.call_recording).toBe('');
+    expect(call.awaiting_analysis).toBe(false);
+  });
+
+  it('reports a queued record as queued rather than as never enrolled', async () => {
+    mockFake.store.call_analysis.set('BZ-3', { call_id: 'BZ-3', status: 'pending', attempts: 0 });
+    const call = byCallId(await get('/api/calls').expect(200))['BZ-3'];
+    expect(call.queue_status).toBe('pending');
+    expect(call.awaiting_analysis).toBe(true);
+  });
+
+  it('leaves a permanently failed record out of the awaiting count', async () => {
+    // It is a state to retry deliberately, not a job the worker still owes.
+    mockFake.store.call_analysis.set('BZ-3', { call_id: 'BZ-3', status: 'failed', attempts: 5 });
+    const call = byCallId(await get('/api/calls').expect(200))['BZ-3'];
+    expect(call.queue_status).toBe('failed');
+    expect(call.awaiting_analysis).toBe(false);
+  });
+});
+
+describe('GET /api/calls/analysis/stats', () => {
+  it('counts the queue by status and reports what is still outstanding', async () => {
+    mockFake.store.call_analysis.set('BZ-3', { call_id: 'BZ-3', status: 'pending', attempts: 0 });
+    const res = await get('/api/calls/analysis/stats').expect(200);
+    expect(res.body.queue).toEqual({ pending: 1, processing: 0, completed: 1, failed: 0 });
+    expect(res.body.coverage.remaining).toBe(1);
+  });
+
+  // Same reach as the row badges it counts — an agent seeing "3 awaiting" is
+  // reading the same fact off the header instead of off three rows.
+  it('is open to agents', async () => {
+    await get('/api/calls/analysis/stats', agentToken).expect(200);
+  });
+});
+
+describe('POST /api/calls/:id/analyse', () => {
+  const analyse = (path, token = adminToken) =>
+    request(app).post(path).set('Authorization', `Bearer ${token}`);
+
+  it('queues the call by its recording url', async () => {
+    const res = await analyse('/api/calls/BZ-3/analyse').expect(200);
+    expect(res.body).toMatchObject({ success: true, queued: true });
+    expect(mockEnqueueRecording).toHaveBeenCalledWith(
+      'BZ-3', 'https://recordings.buzzdial.io/BZ-3.wav', { force: false }
+    );
+  });
+
+  it('passes force through, which is what a retry of a settled record needs', async () => {
+    await analyse('/api/calls/BZ-1/analyse?force=true').expect(200);
+    expect(mockEnqueueRecording).toHaveBeenCalledWith(
+      'BZ-1', expect.any(String), { force: true }
+    );
+  });
+
+  it('refuses a call with no recording instead of queueing a job that must fail', async () => {
+    await analyse('/api/calls/BZ-2/analyse').expect(409);
+    expect(mockEnqueueRecording).not.toHaveBeenCalled();
+  });
+
+  it('404s on a call that does not exist', async () => {
+    await analyse('/api/calls/BZ-999/analyse').expect(404);
+  });
+
+  it('is admin-only, because every press spends Gemini quota', async () => {
+    await analyse('/api/calls/BZ-3/analyse', agentToken).expect(403);
+    expect(mockEnqueueRecording).not.toHaveBeenCalled();
   });
 });

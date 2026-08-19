@@ -20,27 +20,40 @@ const SYSTEM_LABELS = new Set([
   'CATEGORY_UPDATES', 'CATEGORY_FORUMS',
 ]);
 
-/** The AI verdict, mirroring how a call's analysis is presented. */
+/**
+ * The AI verdict, mirroring how a call's analysis is presented.
+ *
+ * It belongs to the whole conversation, not to this message: the worker reads
+ * every message the sender has written and mirrors one verdict onto each of
+ * them. Re-analysing from here therefore re-reads the chain — which is the
+ * point, since a reply judged alone is how the contradictory verdicts happened.
+ */
 function AnalysisPanel({ analysis, onReanalyse, canReanalyse, busy }) {
   const status = analysis?.status;
 
   return (
     <div className="mt-5 pt-4 border-t border-slate-200 dark:border-zinc-800">
       <div className="flex items-center justify-between gap-3 mb-2">
-        <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wide">AI Analysis</p>
+        <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wide">
+          AI Analysis
+          <span className="ml-1.5 font-normal normal-case text-slate-400 dark:text-zinc-500">· for this sender's whole chain</span>
+        </p>
         {canReanalyse && (
           <button
             onClick={onReanalyse}
             disabled={busy}
+            title="Re-read every message from this sender and replace the verdict"
             className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50"
           >
-            {busy ? 'Queueing…' : status === 'completed' ? 'Re-analyse' : 'Analyse now'}
+            {busy ? 'Queueing…' : status === 'completed' ? 'Re-analyse chain' : 'Analyse now'}
           </button>
         )}
       </div>
 
       {!analysis && (
-        <p className="text-sm text-slate-400 dark:text-zinc-500">Not queued for analysis yet.</p>
+        <p className="text-sm text-slate-400 dark:text-zinc-500">
+          No verdict on this message. Our own replies are never analysed — only what the candidate wrote is.
+        </p>
       )}
 
       {status === 'pending' && (
