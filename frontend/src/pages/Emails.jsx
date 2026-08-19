@@ -196,21 +196,21 @@ export default function Emails() {
   usePageRefresh(load, 15_000);
 
   /* Opening a chain marks the whole chain read: in a shared mailbox the unit
-     somebody picks up is the person, not one message. The row updates
-     immediately rather than waiting for the next poll, and a failure is silent
-     — a lost read marker is not worth interrupting someone mid-triage. */
+     somebody picks up is the person, not one message.
+
+     The ROW is updated here, optimistically, so the list answers the click
+     without waiting for a round trip. The request itself belongs to the chat
+     window, which is the thing that knows when the chain has actually been
+     put in front of somebody — and, more practically, firing it from here
+     raced the window's own load: the GET went out alongside the PATCH, came
+     back with the pre-read counts, and the window then sat there saying
+     "2 unread" about a chain it had just marked read. */
   function openConversation(conversation) {
     setSelectedId(conversation.id);
     if (!isUnread(conversation)) return;
 
     setConversations(list => list.map(c => (c.id === conversation.id ? { ...c, unread_count: 0 } : c)));
     setUnreadCount(n => Math.max(0, n - 1));
-
-    fetch(`${API}/api/emails/conversations/${encodeURIComponent(conversation.id)}/read`, {
-      method:  'PATCH',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body:    JSON.stringify({ read: true }),
-    }).catch(() => {});
   }
 
   /* The same job-based export the call report uses: queue, poll, download. It
@@ -272,10 +272,6 @@ export default function Emails() {
           // A reply changes the chain's shape — message count, last activity,
           // and where it sorts in the list.
           onReplied={() => load(true)}
-          onRead={(id, read) => {
-            setConversations(list => list.map(c => (c.id === id ? { ...c, unread_count: read ? 0 : 1 } : c)));
-            setUnreadCount(n => (read ? Math.max(0, n - 1) : n + 1));
-          }}
         />
       )}
       {ticketEmail && <EmailTicketModal email={ticketEmail} onClose={() => setTicketEmail(null)} />}

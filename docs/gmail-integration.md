@@ -219,7 +219,7 @@ Oasis therefore keeps its own marker:
 
 `PATCH /api/emails/:id/read` with `{ read: true | false }`, any authenticated user — in a shared mailbox whoever picks the mail up is the one who marks it handled. The list marks read on open; the detail modal offers **Unread** to put it back, and shows who already opened it, so two agents don't answer the same candidate.
 
-**This does not touch Gmail.** The mailbox still shows the mail as unread. Pushing the label back needs `gmail.modify` in `SCOPE` *and* a Workspace super-admin re-authorising the delegation client_id for the new scope — domain-wide delegation grants are per-scope, so widening it is an Admin Console step, not a deploy.
+**This reaches Gmail too, since v3.8.0** — the label is pushed with `messages.batchModify`, so the mailbox agrees with the app. See *Read state, both directions* above for what happens when the push fails and why the local mirror of `is_unread` is written only on success. Where `GMAIL_SCOPES` is still `gmail.readonly` the older behaviour stands: `read_at` records the operator's action and the mailbox is left untouched.
 
 ## Tagging (replaces one-bucket categorisation)
 

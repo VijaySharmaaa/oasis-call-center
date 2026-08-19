@@ -1,0 +1,101 @@
+# Production topology for the EC2 host — the manifest the running containers
+# are created from.
+#
+# WHY THIS FILE EXISTS
+# On 19 August 2026 the BuzzDial webhook returned 502 for every delivery, and
+# had done since roughly 10 June: about 2,200 calls were rejected at the door
+# and lost. Nothing was wrong with the application. The frontend container had
+# been created by hand — `docker run` rather than `docker compose up` — which
+# put it on a different Docker network from the backend. Nginx could no longer
+# resolve `backend`, so every proxied request failed, and because nginx answers
+# 502 without contacting anyone, the backend logged nothing at all. The outage
+# was invisible from inside the app.
+#
+# The compose file on the host was correct the whole time. The containers just
+# weren't made from it. So the fix is to keep this manifest in the repository
+# and always bring the stack up through it — see scripts/deploy.sh.
+#
+#   docker compose -f docker-compose.deploy.yml pull
+#   docker compose -f docker-compose.deploy.yml up -d
+#
+# Differs from docker-compose.yml (which builds from source for local work):
+# this one runs the images CodeBuild pushed to ECR, and carries the Mongo
+# service the host provides.
+
+services:
+
+  mongo:
+    image: mongo:7
+    container_name: oasis-mongo
+    restart: unless-stopped
+    command: ["--bind_ip_all"]
+    ports:
+      # Loopback ONLY. Never bind 0.0.0.0 here — this instance has no auth
+      # enabled, so the docker network + loopback are the whole security model.
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand(\"ping\").ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - oasis
+
+  backend:
+    image: ${BACKEND_IMAGE:-970776445824.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-backend:dev1}
+    container_name: oasis-backend
+    restart: unless-stopped
+    env_file:
+      - /home/ubuntu/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      LOG_DIR: /app/logs
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - oasis
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-970776445824.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-frontend:dev1}
+    container_name: oasis-frontend
+    restart: unless-stopped
+    ports:
+      # The host's own nginx terminates TLS and proxies to this port.
+      - "8080:80"
+    depends_on:
+      - backend
+    # Probes THROUGH nginx's proxy, not just at nginx itself. `/health` is a
+    # proxied location, so this only passes when the container can actually
+    # reach the backend — which is precisely the link that silently broke.
+    # A split network now shows up as `unhealthy` in `docker ps` instead of as
+    # webhooks disappearing for ten weeks.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - oasis
+
+volumes:
+  mongo-data:
+
+networks:
+  oasis:
+    driver: bridge

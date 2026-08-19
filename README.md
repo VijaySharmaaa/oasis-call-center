@@ -185,3 +185,36 @@ docker compose logs -f
 # Stop
 docker compose down
 ```
+
+### Deploying to the server
+
+CodeBuild (`buildspec.yml`) only builds and pushes images to ECR. Bringing them
+up on the host is a separate step, and it must go through compose:
+
+```bash
+./scripts/deploy.sh            # pull + restart everything, then verify
+./scripts/deploy.sh backend    # one service
+```
+
+**Never create a container with `docker run`.** A hand-run container joins its
+own network, so nginx can no longer resolve `backend`; every proxied request —
+including every BuzzDial webhook — becomes a 502 that the backend never sees
+and never logs. That exact failure ran from roughly 10 June to 19 August 2026
+and cost about 2,200 calls. Nothing in the application was wrong, and nothing in
+its logs showed it.
+
+Two guards now exist against a repeat:
+
+- `docker-compose.deploy.yml` keeps the production topology in the repository,
+  so the containers and the manifest cannot drift apart.
+- The frontend's healthcheck probes `/health` **through** the proxy, so a split
+  network shows as `unhealthy` in `docker ps` rather than as silence.
+
+If webhooks ever go quiet again, the first thing to check is the edge, not the
+app:
+
+```bash
+sudo grep webhook /var/log/nginx/access.log | tail
+```
+
+A `502` there means the delivery never reached the backend.

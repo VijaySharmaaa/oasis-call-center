@@ -276,13 +276,12 @@ function Composer({ canSend, reason, sending, error, value, onChange, onSend }) 
   );
 }
 
-export default function EmailConversationModal({ conversationId, onClose, onRead, onReplied }) {
+export default function EmailConversationModal({ conversationId, onClose, onReplied }) {
   const { token, isAdmin } = useAuth();
   const [conversation, setConversation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState('');
   const [queueing, setQueueing] = useState(false);
-  const [markingUnread, setMarkingUnread] = useState(false);
   const [openMessageId, setOpenMessageId] = useState(null);
   const [showTickets, setShowTickets] = useState(false);
   const [draft, setDraft] = useState('');
@@ -305,7 +304,37 @@ export default function EmailConversationModal({ conversationId, onClose, onRead
       setLoading(true);
       try {
         const data = await load();
-        if (!cancelled) setConversation(data);
+        if (cancelled) return;
+        setConversation(data);
+
+        /* Opening the chain IS reading it, so this is where the mark-read
+           belongs — after the messages are on screen, not fired speculatively
+           from the list while this request was still in flight.
+
+           The server returns the resulting count, so the header corrects itself
+           from the answer rather than from a guess. The per-message markers are
+           cleared the same way: they came from the same pre-read snapshot, and
+           a bubble labelled "unread" inside the window you are reading it in is
+           the same lie one line further down.
+
+           The list has already updated its own row optimistically, so it is not
+           told again — that would decrement the unread total twice. */
+        if ((data.unread_count || 0) > 0) {
+          const res = await fetch(`${API}/api/emails/conversations/${encodeURIComponent(conversationId)}/read`, {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body:    JSON.stringify({ read: true }),
+          }).catch(() => null);
+          if (cancelled) return;
+
+          const result = res && res.ok ? await res.json().catch(() => null) : null;
+          const readAt = new Date().toISOString();
+          setConversation(current => (current ? {
+            ...current,
+            unread_count: result ? (result.unread_count ?? 0) : 0,
+            messages: (current.messages || []).map(m => ({ ...m, is_unread: false, read_at: m.read_at || readAt })),
+          } : current));
+        }
       } catch (err) {
         if (!cancelled) setError(err.message);
       } finally {
@@ -313,7 +342,7 @@ export default function EmailConversationModal({ conversationId, onClose, onRead
       }
     })();
     return () => { cancelled = true; };
-  }, [load]);
+  }, [load, conversationId, token]);
 
   /* What this mailbox is allowed to do. Asked once per open: it changes with
      the delegation, not with the conversation. */
@@ -379,25 +408,6 @@ export default function EmailConversationModal({ conversationId, onClose, onRead
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, openMessageId, showTickets]);
 
-  /* Put the whole chain back in the unread pile — the inverse of the mark-read
-     the list fires on open. Gmail is not told; the service account is read-only. */
-  async function markUnread() {
-    setMarkingUnread(true);
-    try {
-      const res = await fetch(`${API}/api/emails/conversations/${encodeURIComponent(conversationId)}/read`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body:    JSON.stringify({ read: false }),
-      });
-      if (!res.ok) throw new Error('Could not mark unread');
-      onRead?.(conversationId, false);
-      onClose();
-    } catch (err) {
-      setError(err.message);
-      setMarkingUnread(false);
-    }
-  }
-
   /* Re-read the chain, then poll briefly so the verdict appears without the
      operator having to reopen the conversation. */
   async function reanalyse() {
@@ -461,15 +471,6 @@ export default function EmailConversationModal({ conversationId, onClose, onRead
               )}
             </div>
             <div className="shrink-0 ml-4 flex items-center gap-1.5">
-              <button
-                onClick={markUnread}
-                disabled={markingUnread || loading}
-                title="Put this whole chain back in the unread pile (does not change Gmail)"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-slate-300 dark:border-zinc-700 text-slate-600 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition-colors disabled:opacity-40"
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                {markingUnread ? 'Marking…' : 'Unread'}
-              </button>
               <button
                 onClick={() => setShowTickets(true)}
                 disabled={!conversation?.participant_email}

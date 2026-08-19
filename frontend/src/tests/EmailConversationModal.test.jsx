@@ -76,6 +76,12 @@ function stub(conversation = CONVERSATION, { status = { configured: true, can_se
   fetchMock = vi.fn(async (url, options = {}) => {
     const u = String(url);
     if (u.includes('/sync-status')) return { ok: true, json: async () => status };
+    // The endpoint answers with the resulting count, which is what the header
+    // corrects itself from.
+    if (u.includes('/read')) {
+      const read = JSON.parse(options.body || '{}').read !== false;
+      return { ok: true, json: async () => ({ success: true, read, unread_count: read ? 0 : 1 }) };
+    }
     if (u.includes('/reply')) {
       if (reply instanceof Error) return { ok: false, status: 502, json: async () => ({ error: reply.message }) };
       return { ok: true, status: 201, json: async () => (reply || {
@@ -94,6 +100,16 @@ function callTo(fragment) {
   const call = fetchMock.mock.calls.find(c => String(c[0]).includes(fragment));
   return call ? { url: String(call[0]), options: call[1] || {} } : null;
 }
+
+/** Every call to a path, in order — the window marks read on open, so /read
+ *  happens more than once in a session. */
+function callsTo(fragment) {
+  return fetchMock.mock.calls
+    .filter(c => String(c[0]).includes(fragment))
+    .map(c => ({ url: String(c[0]), options: c[1] || {} }));
+}
+
+const lastCallTo = fragment => callsTo(fragment).at(-1) || null;
 
 /** The POST the composer fired, if any. */
 function sentReply() {
@@ -141,7 +157,10 @@ describe('the chain', () => {
     // "3 messages" also appears in the verdict ("3 messages read"), so match the
     // header line as a whole rather than the fragment.
     expect(screen.getByText(/3 messages · 1 replied/)).toBeInTheDocument();
-    expect(screen.getByText(/1 unread/)).toBeInTheDocument();
+    // The unread count is NOT asserted here: opening the window is reading the
+    // chain, so by this point it has marked it read and the count is gone.
+    // "marking the chain read on open" covers that.
+    expect(screen.getByText(/since 17 Aug 2026/)).toBeInTheDocument();
   });
 
   it('repeats a subject only when it changes', async () => {
@@ -219,20 +238,65 @@ describe('the verdict', () => {
   });
 });
 
-describe('read state', () => {
-  it('puts the whole chain back in the unread pile', async () => {
-    const onRead = vi.fn();
-    const onClose = vi.fn();
-    await open({ onRead, onClose });
+describe('marking the chain read on open', () => {
+  /* The regression this exists for: the list used to fire the mark-read while
+     the window's own GET was still in flight, so the window rendered the
+     pre-read counts and then never looked again. It sat there saying
+     "2 unread" about a chain it had just marked read. */
+  it('marks read after the chain has loaded, not racing it', async () => {
+    stub({ ...CONVERSATION, unread_count: 2 });
+    await open();
 
-    await userEvent.click(screen.getByRole('button', { name: /unread/i }));
-
-    const patch = callTo('/read');
+    const patch = callsTo('/read')[0];
     expect(patch.url).toContain('/api/emails/conversations/aasha%40example.com/read');
-    expect(patch.options.method).toBe('PATCH');
-    expect(JSON.parse(patch.options.body)).toEqual({ read: false });
-    await waitFor(() => expect(onRead).toHaveBeenCalledWith('aasha@example.com', false));
-    expect(onClose).toHaveBeenCalled();
+    expect(JSON.parse(patch.options.body)).toEqual({ read: true });
+    // Ordered: the conversation was fetched before the mark-read went out.
+    const urls = fetchMock.mock.calls.map(c => String(c[0]));
+    expect(urls.findIndex(u => u.includes('/conversations/aasha'))).toBeLessThan(urls.findIndex(u => u.includes('/read')));
+  });
+
+  it('stops saying unread once it has', async () => {
+    stub({ ...CONVERSATION, unread_count: 2 });
+    await open();
+
+    await waitFor(() => expect(screen.queryByText(/\d+ unread/)).not.toBeInTheDocument());
+    // Nothing in the window offers to put the chain back either: reading it is
+    // the act, and a button undoing that inside the window doing it was a
+    // contradiction the list already handles.
+    expect(screen.queryByRole('button', { name: /unread/i })).not.toBeInTheDocument();
+  });
+
+  it('clears the per-message markers too, which came from the same snapshot', async () => {
+    stub({
+      ...CONVERSATION,
+      unread_count: 1,
+      messages: [{ ...CONVERSATION.messages[0], is_unread: true, read_at: null }],
+    });
+    await open();
+
+    // A bubble labelled "unread" inside the window you are reading it in is the
+    // same lie one line further down.
+    await waitFor(() => expect(screen.queryByText(/· unread/)).not.toBeInTheDocument());
+  });
+
+  it('does not touch a chain that was already read', async () => {
+    stub({ ...CONVERSATION, unread_count: 0 });
+    await open();
+    expect(callsTo('/read')).toHaveLength(0);
+  });
+
+  it('still shows the chain when the mark-read fails', async () => {
+    stub({ ...CONVERSATION, unread_count: 2 });
+    const original = fetchMock;
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).includes('/read')) throw new Error('offline');
+      return original(url, options);
+    }));
+
+    render(<EmailConversationModal conversationId="aasha@example.com" onClose={() => {}} />);
+    // The messages are what the operator came for; a failed marker must not
+    // take them down with it.
+    expect(await screen.findByText('Transaction ref 4471xx hai.')).toBeInTheDocument();
   });
 });
 

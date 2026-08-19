@@ -88,15 +88,16 @@ function readPatch() {
 }
 
 describe('opening a chat', () => {
-  it('marks the whole chain read, because the unit picked up is the person', async () => {
+  /* The mark-read request belongs to the chat window, which knows when the
+     chain has actually been put in front of somebody. Fired from here it raced
+     the window's own load and left it reporting counts from before the read.
+     The row still answers the click instantly — that part is local. */
+  it('leaves the request to the chat window rather than racing it', async () => {
     await renderPage();
-    expect(unreadDot()).toBeInTheDocument();
-
     await userEvent.click(row());
 
-    await waitFor(() => expect(readPatch()).not.toBeNull());
-    expect(readPatch().url).toContain('/api/emails/conversations/aasha%40example.com/read');
-    expect(readPatch().body).toEqual({ read: true });
+    expect(screen.getByTestId('chat')).toHaveTextContent('aasha@example.com');
+    expect(readPatch()).toBeNull();
   });
 
   it('clears the dot at once rather than waiting for the next poll', async () => {
