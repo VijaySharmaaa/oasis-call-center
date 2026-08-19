@@ -956,8 +956,13 @@ describe('AI analysis surface', () => {
   });
 
   it('offers the schema and live counts for the category filter', async () => {
+    const { CATEGORIZATION_SCHEMA } = jest.requireActual('../src/services/geminiService');
     const res = await get('/api/emails/categories').expect(200);
-    expect(res.body.schema.length).toBeGreaterThan(10);
+
+    // Compared against the schema itself rather than a count: the taxonomy has
+    // been re-cut once already (17 categories into 5), and a magic number only
+    // records what it happened to be on the day the test was written.
+    expect(res.body.schema.map(c => c.name)).toEqual(Object.keys(CATEGORIZATION_SCHEMA));
     expect(res.body.schema[0]).toHaveProperty('sub_categories');
     expect(res.body.counts.find(c => c.category === 'Payment & Fee')).toMatchObject({ total: 1 });
   });

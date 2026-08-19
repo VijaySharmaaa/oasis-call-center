@@ -30,6 +30,9 @@ jest.mock('../src/services/geminiService', () => ({
   detectTranscriptionLoop:     jest.fn(),
   generateCategoryTaxonomy:    jest.fn(),
   generaliseCategoryTaxonomy:  jest.fn(),
+  // The real taxonomy: the route serves it to the Category filter, and a stub
+  // would test the stub. It is a plain object with no Gemini dependency.
+  CATEGORIZATION_SCHEMA: jest.requireActual('../src/services/geminiService').CATEGORIZATION_SCHEMA,
 }));
 
 const at = day => new Date(`2026-08-${day}T10:00:00Z`);
@@ -92,8 +95,12 @@ beforeEach(() => {
     calls: CALLS,
     conversation_analysis: CONVERSATION_ANALYSES,
     email_conversations: CONVERSATIONS,
-    bug_categories:  [{ name: 'Payment Gateway' }, { name: 'Document Upload' }],
-    call_categories: [{ name: 'Payment & Fee' }, { name: 'Portal Access & Registration' }],
+    // Given explicit ids: the fake keys documents by _id, so two docs without
+    // one collapse into a single entry.
+    bug_categories:  [{ _id: 'bc1', name: 'Payment Gateway' }, { _id: 'bc2', name: 'Document Upload' }],
+    // Stands in for the drifted collection — names Gemini invented before the
+    // dynamic taxonomy was switched off, which are no longer in the schema.
+    call_categories: [{ _id: 'cc1', name: 'Payment & Fee' }, { _id: 'cc2', name: 'Portal Access & Registration' }],
   });
   app = express();
   app.use(express.json());
@@ -148,6 +155,36 @@ describe('both queues on one list', () => {
   it('does not ship the queue lock, which is bookkeeping rather than a verdict', async () => {
     const row = (await list('')).analyses.find(a => a.id === 'aasha@example.com');
     expect(row.processing_id).toBeUndefined();
+  });
+});
+
+/**
+ * The Category filter has to offer the vocabulary new verdicts are drawn from.
+ * With the dynamic taxonomy off that is CATEGORIZATION_SCHEMA; the
+ * `call_categories` collection still holds hundreds of names Gemini invented
+ * before the flag existed, and filtering by one of those would match nothing
+ * analysed since.
+ */
+describe('the category filter offers the live taxonomy', () => {
+  const { CATEGORIZATION_SCHEMA } = jest.requireActual('../src/services/geminiService');
+
+  it('serves the hardcoded schema while dynamic categories are off', async () => {
+    // The fake db is seeded with two stale collection entries, neither of which
+    // is in the schema — they must not reach the dropdown.
+    const body = await list('');
+    expect(body.callCategories).toEqual([...Object.keys(CATEGORIZATION_SCHEMA), 'Uncategorised']);
+    expect(body.callCategories).not.toContain('Portal Access & Registration');
+  });
+
+  it('serves the collection when the dynamic taxonomy is switched on', async () => {
+    process.env.DYNAMIC_CATEGORIES_ENABLED = 'true';
+    try {
+      const body = await list('');
+      expect(body.callCategories).toContain('Payment & Fee');
+      expect(body.callCategories).toContain('Portal Access & Registration');
+    } finally {
+      delete process.env.DYNAMIC_CATEGORIES_ENABLED;
+    }
   });
 });
 

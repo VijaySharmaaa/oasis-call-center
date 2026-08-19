@@ -17,8 +17,23 @@ const {
 
 // ─── Categorization schema ────────────────────────────────────────────────────
 
+/**
+ * The taxonomy every verdict is drawn from — five categories, 196
+ * sub-categories, shared by the call worker and the email worker so one issue
+ * means the same thing whichever channel it arrived on.
+ *
+ * Sub-categories are UNIQUE ACROSS CATEGORIES. That is a property worth
+ * keeping: it lets a rule, a report or a migration name a sub-category alone
+ * and have the category follow, so re-cutting the categories — as this v2 did,
+ * folding 17 into 5 — touches nothing that depends on them.
+ *
+ * Dispositions are deliberately absent. "Blank", "Duplicate", "Call too Short",
+ * "Audio Unclear", "Courtesy / Thank You" and the like are triage outcomes, not
+ * issues a candidate raised; they are decided before categorisation and live as
+ * sentinel category values, never as entries here.
+ */
 const CATEGORIZATION_SCHEMA = {
-  "Portal Access & Registration": [
+  "Account Access & Application Details / Eligibility": [
     "Fresh Registration Query",
     "Duplicate Registration Concern",
     "OTR vs Exam Application Confusion",
@@ -29,23 +44,7 @@ const CATEGORIZATION_SCHEMA = {
     "Multiple OTR Accounts Issue",
     "OTR ID Not Received After Registration",
     "Registration Confirmation Not Received",
-    "Apply / OTR Link Not Visible on Portal"
-  ],
-  "Identity Verification": [
-    "Aadhaar OTP Not Received",
-    "Aadhaar Number Not Accepted",
-    "Aadhaar Mismatch",
-    "Name / DOB Mismatch Across Documents",
-    "Identity Proof Selection Query",
-    "Live Photo / Face Match Failure",
-    "Manual Aadhaar Verification Request",
-    "Photo Clicked During Verification Issue",
-    "Aadhaar Linked Mobile Not Available",
-    "Name Prefix Mismatch (KM / Kumari)",
-    "Post-Marriage Surname Mismatch in eKYC",
-    "Wrong ID Type Used at Registration"
-  ],
-  "OTP, Password & CAPTCHA": [
+    "Apply / OTR Link Not Visible on Portal",
     "Mobile OTP Not Received",
     "Email OTP Not Received",
     "OTP Expired Before Use",
@@ -53,26 +52,15 @@ const CATEGORIZATION_SCHEMA = {
     "Password Forgotten / Reset",
     "CAPTCHA Not Loading / Unclear",
     "Account Recovery Query",
-    "OTP Coming on Wrong Number"
-  ],
-  "Category & Reservation": [
-    "General Category Query",
-    "OBC Category & Creamy Layer",
-    "OBC Non-Creamy Layer Certificate Query",
-    "SC / ST Category",
-    "SC / ST Sub-Category Clarification",
-    "EWS Category",
-    "EWS Certificate Format / Validity Query",
-    "Divyang / PwD / PH Category",
-    "Disability Type & Percentage Query",
-    "Dependent Freedom Fighter Category",
-    "Ex-Army / Ex-Serviceman Category",
-    "Age Relaxation Query",
-    "UP Residency & Reservation Eligibility",
-    "Category Certificate Date Validity Query",
-    "Category Change After Form Submission"
-  ],
-  "Address & Personal Details": [
+    "OTP Coming on Wrong Number",
+    "Login Method Query",
+    "OTR ID Forgotten / Recovery",
+    "OTP Login Not Working",
+    "Account Locked / Blocked",
+    "Too Many Failed Login Attempts",
+    "Registered Mobile Not Accessible",
+    "Login with New Device Issue",
+    "Session Timeout Issue",
     "Permanent Address Entry Issue",
     "Correspondence Address Entry Issue",
     "District / State Dropdown Issue",
@@ -84,9 +72,7 @@ const CATEGORIZATION_SCHEMA = {
     "Twin Information Query",
     "Father / Husband Name Entry Issue",
     "Mobile / Email Change in Profile",
-    "Marital Status Field Query"
-  ],
-  "Educational Qualifications": [
+    "Marital Status Field Query",
     "Education Details Entry in OTR",
     "Wrong Education Row Added",
     "Board / University Not in Dropdown",
@@ -102,9 +88,57 @@ const CATEGORIZATION_SCHEMA = {
     "Appearing Option Missing in Dropdown",
     "Board Roll Number Digit Length Rejected",
     "Out-of-State / NIOS Qualification Not Listed",
-    "Graduation Field Mandatory but Not Applicable"
+    "Graduation Field Mandatory but Not Applicable",
+    "General Category Query",
+    "OBC Category & Creamy Layer",
+    "OBC Non-Creamy Layer Certificate Query",
+    "SC / ST Category",
+    "SC / ST Sub-Category Clarification",
+    "EWS Category",
+    "EWS Certificate Format / Validity Query",
+    "Divyang / PwD / PH Category",
+    "Disability Type & Percentage Query",
+    "Dependent Freedom Fighter Category",
+    "Ex-Army / Ex-Serviceman Category",
+    "Age Relaxation Query",
+    "UP Residency & Reservation Eligibility",
+    "Category Certificate Date Validity Query",
+    "Category Change After Form Submission",
+    "Preview & Edit Before OTR Completion",
+    "OTR Profile Locked After Submission",
+    "Complete OTR Profile Step Query",
+    "OTR Submission Confirmation Not Received",
+    "Preview Section Data Missing or Wrong",
+    "How to Edit Saved OTR Data",
+    "OTR Final Submit Button Issue",
+    "Print / Download OTR Form",
+    "Paper I Eligibility Query",
+    "Paper II Eligibility Query",
+    "Both Papers Application Query",
+    "Subject Group / Combination Selection",
+    "Practising Government Teacher Details Entry",
+    "Qualification Status (Passed / Appearing)",
+    "B.Ed Appearing Candidate Eligibility",
+    "D.El.Ed / BTC / JBT Eligibility Query",
+    "Age Limit Eligibility Query",
+    "Exam Centre Preference Entry",
+    "Application Form Section Not Saving",
+    "How to Apply for Exam After OTR",
+    "In-Service Teacher Without Graduation Eligibility"
   ],
-  "Uploads & Documents": [
+  "Documents & Identity Verification": [
+    "Aadhaar OTP Not Received",
+    "Aadhaar Number Not Accepted",
+    "Aadhaar Mismatch",
+    "Name / DOB Mismatch Across Documents",
+    "Identity Proof Selection Query",
+    "Live Photo / Face Match Failure",
+    "Manual Aadhaar Verification Request",
+    "Photo Clicked During Verification Issue",
+    "Aadhaar Linked Mobile Not Available",
+    "Name Prefix Mismatch (KM / Kumari)",
+    "Post-Marriage Surname Mismatch in eKYC",
+    "Wrong ID Type Used at Registration",
     "Photograph Upload Issue",
     "Signature Upload Issue",
     "Photo Identity Proof Upload",
@@ -122,31 +156,6 @@ const CATEGORIZATION_SCHEMA = {
     "Wrong Person's Document Uploaded",
     "Handwritten Declaration Language Requirement"
   ],
-  "OTR Completion & Preview": [
-    "Preview & Edit Before OTR Completion",
-    "OTR Profile Locked After Submission",
-    "Complete OTR Profile Step Query",
-    "OTR Submission Confirmation Not Received",
-    "Preview Section Data Missing or Wrong",
-    "How to Edit Saved OTR Data",
-    "OTR Final Submit Button Issue",
-    "Print / Download OTR Form"
-  ],
-  "Exam Application & Eligibility": [
-    "Paper I Eligibility Query",
-    "Paper II Eligibility Query",
-    "Both Papers Application Query",
-    "Subject Group / Combination Selection",
-    "Practising Government Teacher Details Entry",
-    "Qualification Status (Passed / Appearing)",
-    "B.Ed Appearing Candidate Eligibility",
-    "D.El.Ed / BTC / JBT Eligibility Query",
-    "Age Limit Eligibility Query",
-    "Exam Centre Preference Entry",
-    "Application Form Section Not Saving",
-    "How to Apply for Exam After OTR",
-    "In-Service Teacher Without Graduation Eligibility"
-  ],
   "Payment & Fee": [
     "Fee Amount Query",
     "Category-wise Fee Query",
@@ -163,17 +172,7 @@ const CATEGORIZATION_SCHEMA = {
     "Fee Receipt / Challan Download Issue",
     "Fee Waiver for Reserved Category Query"
   ],
-  "Login & Account Access": [
-    "Login Method Query",
-    "OTR ID Forgotten / Recovery",
-    "OTP Login Not Working",
-    "Account Locked / Blocked",
-    "Too Many Failed Login Attempts",
-    "Registered Mobile Not Accessible",
-    "Login with New Device Issue",
-    "Session Timeout Issue"
-  ],
-  "Amendment & Post-Submission": [
+  "Amendment & Changes in Form": [
     "Amendment Window Opening Date Query",
     "What Fields Can Be Corrected",
     "Amendment Process Step-by-Step Query",
@@ -188,7 +187,7 @@ const CATEGORIZATION_SCHEMA = {
     "Wrong Exam Level Selected (Primary vs Junior)",
     "Form Cancellation / Withdrawal Request"
   ],
-  "Exam Information": [
+  "General": [
     "Important Dates & Schedule Query",
     "Exam Pattern & Structure Query",
     "Number of Questions / Total Marks",
@@ -200,9 +199,7 @@ const CATEGORIZATION_SCHEMA = {
     "Normalisation / Multi-Shift Query",
     "TET Validity Period Query",
     "Syllabus Query",
-    "Previous Year Paper Query"
-  ],
-  "Admit Card & Certificate": [
+    "Previous Year Paper Query",
     "Admit Card Release Date Query",
     "Admit Card Download Process",
     "Admit Card Not Downloading / Available",
@@ -214,9 +211,7 @@ const CATEGORIZATION_SCHEMA = {
     "DigiLocker Certificate Query",
     "Photo Mismatch on Admit Card",
     "Category Error on Certificate",
-    "Duplicate Certificate / Marksheet Query"
-  ],
-  "Scribe & Compensatory Time": [
+    "Duplicate Certificate / Marksheet Query",
     "Scribe Eligibility Criteria Query",
     "How to Request a Scribe",
     "Scribe Arrangement Process",
@@ -225,9 +220,7 @@ const CATEGORIZATION_SCHEMA = {
     "Compensatory Time (30 Minutes) Query",
     "Scribe Declaration Form Submission",
     "Medical Certificate for PwD Requirement",
-    "Disability Certificate Format Query"
-  ],
-  "Result & Merit List": [
+    "Disability Certificate Format Query",
     "Result Declaration Date Query",
     "Result Check Process",
     "Merit List Query",
@@ -235,17 +228,15 @@ const CATEGORIZATION_SCHEMA = {
     "Rank / Score Discrepancy",
     "District Allocation Query",
     "Selection Process After TET",
-    "Waiting List Query"
-  ],
-  "General Enquiry": [
+    "Waiting List Query",
     "Application Mode Query",
     "Notification / Advertisement Query",
     "Helpline Timing Query",
     "Appointment / Job Guarantee Query",
     "Transfer to Another Department",
-    "Call Back Request",
-    "Unrelated / Wrong Call",
-    "Repeated Call / Follow-up",
+    "Contact Request",
+    "Out-of-Scope Contact",
+    "Repeated Contact / Follow-up",
     "Complaint Against Portal / Process"
   ]
 };

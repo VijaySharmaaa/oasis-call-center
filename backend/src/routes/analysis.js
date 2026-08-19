@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const { getDb } = require('../db');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { createExportJob, getExportJob } = require('../workers/exportWorker');
-const { detectTranscriptionLoop, generateCategoryTaxonomy, generaliseCategoryTaxonomy } = require('../services/geminiService');
+const { detectTranscriptionLoop, generateCategoryTaxonomy, generaliseCategoryTaxonomy, CATEGORIZATION_SCHEMA } = require('../services/geminiService');
 const { dynamicCategoriesEnabled } = require('../config/features');
 const { tagMatch } = require('../lib/tags');
 const {
@@ -1051,7 +1051,15 @@ router.get('/', async (req, res) => {
   // the dropdown explicitly. Same idea for bug_categories, where the auto-
   // worker's no-fit case writes "-" but operators occasionally need to
   // filter on truly Uncategorised bugs too.
-  const callCategoryNames = callCategories.map(c => c.name);
+  // Which vocabulary the Category filter offers has to be the one new verdicts
+  // are actually drawn from. With the dynamic taxonomy switched off that is
+  // CATEGORIZATION_SCHEMA, and the `call_categories` collection is a fossil of
+  // the era when Gemini invented its own names — 955 of them against a schema
+  // of five. Offering those would be a dropdown of filters that match nothing
+  // analysed from here on.
+  const callCategoryNames = dynamicCategoriesEnabled()
+    ? callCategories.map(c => c.name)
+    : Object.keys(CATEGORIZATION_SCHEMA);
   if (!callCategoryNames.some(n => n.toLowerCase() === 'uncategorised')) {
     callCategoryNames.push('Uncategorised');
   }
