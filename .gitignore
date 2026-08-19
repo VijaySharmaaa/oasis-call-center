@@ -47,3 +47,10 @@ Temp/
 **/visual/.artifacts/
 **/playwright-report/
 **/test-results/
+
+# Playwright screenshot harness — local verification only, never built or
+# shipped. It is deliberately NOT a dependency of frontend/package.json
+# either: the image builds with `npm ci`, so anything listed there is
+# installed into the build whether the image needs it or not.
+frontend/playwright.config.js
+frontend/visual/

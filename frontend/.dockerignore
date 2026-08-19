@@ -2,3 +2,14 @@ node_modules
 dist
 .env
 .env.*
+
+# Local-only tooling. None of this belongs in the image: the screenshot harness
+# and the contrast checker are for verifying a change on a developer's machine,
+# and shipping them only makes the build context bigger and the layer cache
+# noisier. Keeping them out here is the second guard; the first is that
+# @playwright/test is not a dependency of this package at all.
+visual
+playwright.config.js
+scripts
+src/tests
+*.md

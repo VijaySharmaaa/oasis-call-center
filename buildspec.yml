@@ -3,9 +3,13 @@ version: 0.2
 env:
   variables:
     AWS_DEFAULT_REGION: ap-south-1
-    ACCOUNT_ID: 461864990714
-    BACKEND_REPO: 461864990714.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-backend
-    FRONTEND_REPO: 461864990714.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-frontend
+    # 970776445824 is the account the EC2 host, its instance role and the ECR
+    # in docker-compose.yml all live in. This has been reverted to another
+    # account by a merge more than once — if a deploy ever pulls an image that
+    # is somehow "already up to date" after a fresh build, check here first.
+    ACCOUNT_ID: "970776445824"
+    BACKEND_REPO: 970776445824.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-backend
+    FRONTEND_REPO: 970776445824.dkr.ecr.ap-south-1.amazonaws.com/otr-ivr-frontend
 
 phases:
   pre_build:
@@ -38,8 +42,31 @@ phases:
       - echo "Checking frontend..."
       - ls -la ./frontend
       - test -f ./frontend/Dockerfile
+      # The same three the backend is checked for. The frontend Dockerfile runs
+      # `npm ci`, which needs BOTH manifests and needs them to agree — the
+      # backend has always been checked for its lock file and the frontend was
+      # not, which is the asymmetry that let a frontend-only break through.
+      - test -f ./frontend/package.json
+      - test -f ./frontend/package-lock.json
+      - test -f ./frontend/nginx.conf
 
   build:
+    # WHY THIS IS HERE — the failure it prevents has already happened.
+    #
+    # CodeBuild runs post_build even when build FAILS. The backend is built and
+    # tagged first, so a frontend build that dies still reaches the push phase
+    # and ships the backend. From the outside that looks like a normal deploy:
+    # a new backend image lands in ECR every time, and the frontend silently
+    # stays on whatever it was.
+    #
+    # That is exactly what happened on 19 Aug 2026: the 13:11 build pushed
+    # otr-ivr-backend:dev1 (279654d) while otr-ivr-frontend:dev1 stayed on the
+    # previous commit, because the frontend `npm ci` failed on a package.json
+    # that listed a dependency package-lock.json had never heard of.
+    #
+    # ABORT makes the build stop where it broke, so a red build means nothing
+    # shipped rather than half of it.
+    on-failure: ABORT
     commands:
       - echo "========================================"
       - echo "Building Backend Docker Image"
@@ -88,6 +115,8 @@ phases:
 
       - echo "========================================"
       - echo "Build completed successfully"
+      - echo "Backend:  $BACKEND_REPO:$TAG"
+      - echo "Frontend: $FRONTEND_REPO:$TAG"
       - echo "========================================"
 
 artifacts:
